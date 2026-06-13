@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -6,6 +8,15 @@ from pydantic import BaseModel, Field
 AttendanceStatus = Literal["safe", "watch", "danger", "critical"]
 ClassStatus = Literal["held", "cancelled", "holiday", "teacher_absent"]
 SubmissionStatus = Literal["submitted", "pending", "late", "missed", "unknown"]
+Weekday = Literal[
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+]
 
 
 class SubjectAttendance(BaseModel):
@@ -43,6 +54,47 @@ class AttendanceEvent(BaseModel):
     source: str
     actor_id: str | None = None
     created_at: str
+
+
+class TimetableEntry(BaseModel):
+    subject_code: str
+    subject_name: str
+    faculty: str | None = None
+    weekday: Weekday
+    start_time: str
+    end_time: str
+    room: str | None = None
+
+
+class TimetableUploadResponse(BaseModel):
+    source_name: str
+    uploaded_at: str | None = None
+    entries: list[TimetableEntry]
+    message: str
+
+
+class TimetableResponse(BaseModel):
+    has_uploaded_timetable: bool
+    source_name: str
+    uploaded_at: str | None = None
+    timezone: str = "Asia/Kolkata"
+    weekdays_with_classes: list[Weekday]
+    classes_per_day: dict[str, int]
+    today: list[TimetableEntry]
+    today_count: int
+    next_class: TimetableEntry | None = None
+    next_class_starts_at: str | None = None
+    entries: list[TimetableEntry]
+
+
+class TimetableTodayResponse(BaseModel):
+    date: str
+    weekday: Weekday
+    timezone: str = "Asia/Kolkata"
+    class_count: int
+    classes: list[TimetableEntry]
+    next_class: TimetableEntry | None = None
+    next_class_starts_at: str | None = None
 
 
 class ExamReminder(BaseModel):

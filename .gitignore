@@ -20,3 +20,4 @@ build/
 demo-recording/
 pdf_preview/
 backend/data/
+backend/app/data/

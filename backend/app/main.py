@@ -1,8 +1,20 @@
+import asyncio
+from contextlib import suppress
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import agent, campusflow, health, integrations
 from app.core.config import settings
+
+
+async def _discord_attendance_scheduler() -> None:
+    while True:
+        try:
+            await integrations.discord_service.send_scheduled_class_prompts()
+        except Exception as exc:
+            print(f"Discord attendance scheduler skipped a run: {exc}")
+        await asyncio.sleep(60)
 
 
 def create_app() -> FastAPI:
@@ -24,6 +36,26 @@ def create_app() -> FastAPI:
     app.include_router(agent.router, prefix=settings.api_v1_prefix)
     app.include_router(campusflow.router, prefix=settings.api_v1_prefix)
     app.include_router(integrations.router, prefix=settings.api_v1_prefix)
+
+    @app.on_event("startup")
+    async def start_discord_attendance_scheduler() -> None:
+        if not settings.discord_scheduler_enabled:
+            app.state.discord_attendance_scheduler_task = None
+            return
+        task = getattr(app.state, "discord_attendance_scheduler_task", None)
+        if task and not task.done():
+            return
+        app.state.discord_attendance_scheduler_task = asyncio.create_task(
+            _discord_attendance_scheduler()
+        )
+
+    @app.on_event("shutdown")
+    async def stop_discord_attendance_scheduler() -> None:
+        task = getattr(app.state, "discord_attendance_scheduler_task", None)
+        if task:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     return app
 

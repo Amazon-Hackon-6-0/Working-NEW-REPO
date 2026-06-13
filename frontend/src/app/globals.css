@@ -403,6 +403,11 @@ select {
   gap: 12px;
 }
 
+.timetable-panel {
+  display: grid;
+  gap: 14px;
+}
+
 .exam-upload-panel {
   display: grid;
   gap: 12px;
@@ -433,7 +438,7 @@ select {
 }
 
 .integration-actions {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .integration-actions button {
@@ -456,6 +461,11 @@ select {
   font-weight: 740;
   min-height: 44px;
   padding: 0 14px;
+}
+
+.file-upload-row button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .file-upload-row {
@@ -482,6 +492,80 @@ select {
   color: var(--muted);
   line-height: 1.45;
   margin: 0;
+}
+
+.upload-message.loading {
+  color: var(--blue);
+}
+
+.upload-message.success {
+  color: var(--green);
+  font-weight: 740;
+}
+
+.upload-message.error {
+  color: var(--red);
+  font-weight: 740;
+}
+
+.timetable-summary {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(180px, 0.35fr) minmax(0, 1fr);
+}
+
+.timetable-summary div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  min-height: 74px;
+  padding: 13px;
+}
+
+.timetable-summary span,
+.class-slot span,
+.class-slot small,
+.day-header span {
+  color: var(--muted);
+}
+
+.weekly-timetable {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.day-column {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding: 12px;
+}
+
+.day-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.day-header span {
+  background: var(--ink-soft);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 760;
+  padding: 5px 8px;
+}
+
+.class-slot {
+  background: var(--ink-soft);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  min-height: 94px;
+  padding: 11px;
 }
 
 .integration-message {
@@ -583,6 +667,10 @@ select {
 
   .file-upload-row {
     align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .timetable-summary {
     grid-template-columns: 1fr;
   }
 

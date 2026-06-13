@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,6 +28,7 @@ class Settings(BaseSettings):
     discord_public_key: str | None = None
     discord_bot_token: str | None = None
     discord_channel_id: str | None = None
+    discord_scheduler_enabled: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -5,6 +5,16 @@ import { useEffect, useMemo, useState } from "react";
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
 
+const weekdays = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
+
 const subjects = [
   {
     code: "DBMS",
@@ -112,6 +122,12 @@ function statusClass(value) {
   return value.toLowerCase();
 }
 
+function formatTimetableClass(entry) {
+  if (!entry) return "No class scheduled";
+  const room = entry.room ? ` · ${entry.room}` : "";
+  return `${entry.subject_code} · ${entry.weekday} ${entry.start_time}-${entry.end_time}${room}`;
+}
+
 export default function Home() {
   const threshold = 75;
   const [selectedSubject, setSelectedSubject] = useState(subjects[0].code);
@@ -127,6 +143,13 @@ export default function Home() {
     "Upload a text-based PDF exam schedule, then extract reminders.",
   );
   const [examPdfFile, setExamPdfFile] = useState(null);
+  const [timetable, setTimetable] = useState(null);
+  const [timetablePdfFile, setTimetablePdfFile] = useState(null);
+  const [timetableUploadMessage, setTimetableUploadMessage] = useState(
+    "Upload your semester timetable PDF to replace demo attendance subjects.",
+  );
+  const [timetableUploadStatus, setTimetableUploadStatus] = useState("idle");
+  const [isTimetableUploading, setIsTimetableUploading] = useState(false);
 
   const attendance = useMemo(
     () => {
@@ -141,7 +164,22 @@ export default function Home() {
     [overview],
   );
 
-  const activeSubject = attendance.find((item) => item.code === selectedSubject);
+  const timetableByDay = useMemo(() => {
+    const grouped = new Map(weekdays.map((weekday) => [weekday, []]));
+    (timetable?.entries || []).forEach((entry) => {
+      grouped.get(entry.weekday)?.push(entry);
+    });
+    return weekdays
+      .map((weekday) => ({
+        weekday,
+        classes: grouped.get(weekday) || [],
+      }))
+      .filter((item) => item.classes.length);
+  }, [timetable]);
+
+  const activeSubject = attendance.find((item) => item.code === selectedSubject) ||
+    attendance[0];
+  const effectiveSelectedSubject = activeSubject?.code || selectedSubject;
   const liveAssignments = overview?.assignments?.length
     ? overview.assignments.map((assignment) => ({
         title: assignment.title,
@@ -166,6 +204,8 @@ export default function Home() {
   const pendingAssignments = liveAssignments.filter(
     (assignment) => assignment.state !== "Submitted",
   ).length;
+  const todayClassCount = timetable?.today_count ?? 0;
+  const nextClassLabel = formatTimetableClass(timetable?.next_class);
 
   async function refreshCampusFlowData() {
     await fetch(`${API_BASE}/campusflow/overview`)
@@ -182,6 +222,11 @@ export default function Home() {
       .then((response) => response.json())
       .then(setAttendanceEvents)
       .catch(() => setAttendanceEvents([]));
+
+    await fetch(`${API_BASE}/campusflow/timetable`)
+      .then((response) => response.json())
+      .then(setTimetable)
+      .catch(() => setTimetable(null));
   }
 
   useEffect(() => {
@@ -222,7 +267,7 @@ export default function Home() {
     const response = await fetch(`${API_BASE}/integrations/discord/daily-feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subject_code: selectedSubject }),
+      body: JSON.stringify({ subject_code: effectiveSelectedSubject }),
     });
     const data = await response.json();
     if (!response.ok) {
@@ -230,6 +275,22 @@ export default function Home() {
       return;
     }
     setIntegrationMessage(data.message);
+    refreshCampusFlowData();
+  }
+
+  async function runScheduledDiscordPrompts() {
+    const response = await fetch(
+      `${API_BASE}/integrations/discord/scheduled-feedback/run-today`,
+      { method: "POST" },
+    );
+    const data = await response.json();
+    if (!response.ok) {
+      setIntegrationMessage(data.detail || "Discord scheduled prompt run failed.");
+      return;
+    }
+    setIntegrationMessage(
+      `${data.sent} sent, ${data.skipped} skipped. ${data.messages.join(" ")}`,
+    );
     refreshCampusFlowData();
   }
 
@@ -259,6 +320,50 @@ export default function Home() {
     refreshCampusFlowData();
   }
 
+  async function uploadTimetablePdf() {
+    if (!timetablePdfFile) {
+      setTimetableUploadMessage("Choose a semester timetable PDF first.");
+      setTimetableUploadStatus("error");
+      return;
+    }
+
+    setIsTimetableUploading(true);
+    setTimetableUploadStatus("loading");
+    setTimetableUploadMessage("Extracting classes from timetable PDF...");
+    const formData = new FormData();
+    formData.append("file", timetablePdfFile);
+
+    try {
+      const response = await fetch(`${API_BASE}/campusflow/timetable/upload-pdf`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setTimetableUploadStatus("error");
+        setTimetableUploadMessage(data.detail || "Semester timetable upload failed.");
+        return;
+      }
+      if (!data.entries?.length) {
+        setTimetableUploadStatus("error");
+        setTimetableUploadMessage(
+          data.message || "Could not find class rows in this timetable PDF.",
+        );
+        return;
+      }
+      setTimetableUploadStatus("success");
+      setTimetableUploadMessage(data.message);
+      refreshCampusFlowData();
+    } catch {
+      setTimetableUploadStatus("error");
+      setTimetableUploadMessage(
+        "Could not reach the backend while uploading the timetable PDF.",
+      );
+    } finally {
+      setIsTimetableUploading(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="CampusFlow navigation">
@@ -268,6 +373,7 @@ export default function Home() {
         </div>
         <nav>
           <a href="#attendance">Attendance</a>
+          <a href="#timetable">Timetable</a>
           <a href="#exams">Exams</a>
           <a href="#assignments">Assignments</a>
           <a href="#briefing">Briefing</a>
@@ -301,14 +407,83 @@ export default function Home() {
             <p>assignments need attention</p>
           </div>
           <div className="metric">
-            <span>Next exam</span>
-            <strong>{liveExams[0]?.date || "None"}</strong>
-            <p>{liveExams[0]?.subject || "Upload schedule PDF"}</p>
+            <span>Today&apos;s classes</span>
+            <strong>{todayClassCount}</strong>
+            <p>{timetable?.has_uploaded_timetable ? "from uploaded timetable" : "demo timetable fallback"}</p>
           </div>
           <div className="metric">
-            <span>Daily nudges</span>
-            <strong>8 PM</strong>
-            <p>Discord private channel</p>
+            <span>Next class</span>
+            <strong>{timetable?.next_class?.subject_code || "None"}</strong>
+            <p>{nextClassLabel}</p>
+          </div>
+        </section>
+
+        <section className="panel timetable-panel" id="timetable">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Semester timetable</p>
+              <h3>PDF upload and weekly classes</h3>
+            </div>
+            <span className="threshold">
+              {timetable?.has_uploaded_timetable ? "Uploaded" : "Demo fallback"}
+            </span>
+          </div>
+          <div className="file-upload-row">
+            <label>
+              Semester timetable PDF
+              <input
+                type="file"
+                accept="application/pdf"
+                onChange={(event) => setTimetablePdfFile(event.target.files?.[0] || null)}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={uploadTimetablePdf}
+              disabled={isTimetableUploading}
+            >
+              {isTimetableUploading ? "Extracting..." : "Extract timetable"}
+            </button>
+          </div>
+          <p className={`upload-message ${timetableUploadStatus}`}>
+            {timetableUploadMessage}
+          </p>
+          <div className="timetable-summary">
+            <div>
+              <span>Today</span>
+              <strong>{todayClassCount} class{todayClassCount === 1 ? "" : "es"}</strong>
+            </div>
+            <div>
+              <span>Next</span>
+              <strong>{nextClassLabel}</strong>
+            </div>
+          </div>
+          <div className="weekly-timetable">
+            {timetableByDay.length === 0 ? (
+              <p className="empty-state">
+                No timetable classes loaded yet.
+              </p>
+            ) : (
+              timetableByDay.map((day) => (
+                <article className="day-column" key={day.weekday}>
+                  <div className="day-header">
+                    <strong>{day.weekday}</strong>
+                    <span>{day.classes.length}</span>
+                  </div>
+                  {day.classes.map((entry, index) => (
+                    <div
+                      className="class-slot"
+                      key={`${entry.weekday}-${entry.start_time}-${entry.end_time}-${entry.subject_code}-${entry.room || "room"}-${index}`}
+                    >
+                      <strong>{entry.subject_code}</strong>
+                      <span>{entry.start_time}-{entry.end_time}</span>
+                      <small>{entry.subject_name}</small>
+                      <small>{entry.faculty || "Faculty TBA"}{entry.room ? ` · ${entry.room}` : ""}</small>
+                    </div>
+                  ))}
+                </article>
+              ))
+            )}
           </div>
         </section>
 
@@ -362,7 +537,7 @@ export default function Home() {
             <label>
               Subject
               <select
-                value={selectedSubject}
+                value={effectiveSelectedSubject}
                 onChange={(event) => setSelectedSubject(event.target.value)}
               >
                 {attendance.map((subject) => (
@@ -431,6 +606,9 @@ export default function Home() {
             </button>
             <button type="button" onClick={sendDiscordPrompt}>
               Send button prompt
+            </button>
+            <button type="button" onClick={runScheduledDiscordPrompts}>
+              Run today&apos;s prompts
             </button>
           </div>
           <p className="integration-message">{integrationMessage}</p>

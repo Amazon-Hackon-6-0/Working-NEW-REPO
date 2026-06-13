@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pydantic import BaseModel
 
 from app.schemas.campusflow import AssignmentItem
@@ -35,6 +37,15 @@ class DiscordPromptResponse(BaseModel):
     sent: bool
     message: str
     feedback_url: str
+
+
+class DiscordScheduledPromptResponse(BaseModel):
+    sent: int
+    skipped: int
+    attempted: int
+    date: str
+    timezone: str = "Asia/Kolkata"
+    messages: list[str]
 
 
 class DiscordInteractionResponse(BaseModel):

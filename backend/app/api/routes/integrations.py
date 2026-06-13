@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from app.schemas.campusflow import AttendanceFeedback, ClassStatus
@@ -6,6 +8,7 @@ from app.schemas.integrations import (
     ClassroomSyncResponse,
     DiscordPromptRequest,
     DiscordPromptResponse,
+    DiscordScheduledPromptResponse,
     GoogleAuthUrlResponse,
     GoogleCallbackResponse,
     IntegrationStatus,
@@ -79,6 +82,14 @@ async def send_discord_daily_feedback(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Discord prompt failed: {exc}") from exc
+
+
+@router.post("/discord/scheduled-feedback/run-today", response_model=DiscordScheduledPromptResponse)
+async def run_today_discord_scheduled_feedback() -> DiscordScheduledPromptResponse:
+    try:
+        return await discord_service.send_scheduled_class_prompts(include_future_today=True)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Discord scheduled prompts failed: {exc}") from exc
 
 
 @router.post("/discord/interactions")

@@ -10,18 +10,30 @@ from app.schemas.campusflow import (
     ExamReminder,
     ExamScheduleUpload,
     ExamScheduleUploadResponse,
+    TimetableResponse,
+    TimetableTodayResponse,
+    TimetableUploadResponse,
 )
 from app.services.assignment_repository import AssignmentRepository
 from app.services.attendance_repository import AttendanceRepository
 from app.services.campusflow_service import CampusFlowService
 from app.services.exam_repository import ExamRepository
 from app.services.exam_schedule_service import ExamScheduleService
+from app.services.timetable_repository import TimetableRepository
+from app.services.timetable_service import TimetableService
 
 router = APIRouter(prefix="/campusflow", tags=["CampusFlow"])
 attendance_repository = AttendanceRepository()
 assignment_repository = AssignmentRepository()
 exam_repository = ExamRepository()
-campusflow_service = CampusFlowService(attendance_repository, assignment_repository, exam_repository)
+timetable_repository = TimetableRepository()
+timetable_service = TimetableService(timetable_repository)
+campusflow_service = CampusFlowService(
+    attendance_repository,
+    assignment_repository,
+    exam_repository,
+    timetable_service,
+)
 exam_schedule_service = ExamScheduleService(exam_repository)
 
 
@@ -33,6 +45,34 @@ async def get_overview() -> CampusFlowOverview:
 @router.get("/attendance/events", response_model=list[AttendanceEvent])
 async def get_attendance_events() -> list[AttendanceEvent]:
     return campusflow_service.list_attendance_events()
+
+
+@router.get("/timetable", response_model=TimetableResponse)
+async def get_timetable() -> TimetableResponse:
+    return campusflow_service.get_timetable()
+
+
+@router.get("/timetable/today", response_model=TimetableTodayResponse)
+async def get_timetable_today() -> TimetableTodayResponse:
+    return campusflow_service.get_timetable_today()
+
+
+@router.post("/timetable/upload-pdf", response_model=TimetableUploadResponse)
+async def upload_timetable_pdf(file: UploadFile = File(...)) -> TimetableUploadResponse:
+    if file.content_type not in {"application/pdf", "application/octet-stream"}:
+        raise HTTPException(status_code=400, detail="Upload a PDF file.")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded PDF is empty.")
+
+    try:
+        return timetable_service.upload_pdf_timetable(
+            filename=file.filename or "semester_timetable.pdf",
+            content=content,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not process PDF: {exc}") from exc
 
 
 @router.get("/exams", response_model=list[ExamReminder])

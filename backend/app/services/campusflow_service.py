@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from math import floor
+from datetime import datetime, timedelta
 
 from app.schemas.campusflow import (
     AssignmentItem,
@@ -12,10 +15,14 @@ from app.schemas.campusflow import (
     DailyBriefing,
     ExamReminder,
     SubjectAttendance,
+    TimetableEntry,
+    TimetableResponse,
+    TimetableTodayResponse,
 )
 from app.services.assignment_repository import AssignmentRepository
 from app.services.attendance_repository import AttendanceRepository
 from app.services.exam_repository import ExamRepository
+from app.services.timetable_service import TimetableService
 
 
 class CampusFlowService:
@@ -28,11 +35,13 @@ class CampusFlowService:
         attendance_repository: AttendanceRepository | None = None,
         assignment_repository: AssignmentRepository | None = None,
         exam_repository: ExamRepository | None = None,
+        timetable_service: TimetableService | None = None,
     ) -> None:
         self.attendance_repository = attendance_repository or AttendanceRepository()
         self.assignment_repository = assignment_repository or AssignmentRepository()
         self.exam_repository = exam_repository or ExamRepository()
-        self._subjects = [
+        self.timetable_service = timetable_service or TimetableService()
+        self._demo_subjects = [
             {
                 "code": "DBMS",
                 "name": "Database Management Systems",
@@ -68,7 +77,8 @@ class CampusFlowService:
         ]
 
     def get_overview(self) -> CampusFlowOverview:
-        attendance = [self._build_attendance(self._apply_saved_events(item)) for item in self._subjects]
+        subjects = self._attendance_subjects()
+        attendance = [self._build_attendance(self._apply_saved_events(item)) for item in subjects]
         exams = self.exam_repository.list_exams()
         assignments = self.assignment_repository.list_assignments() or [
             AssignmentItem(
@@ -126,8 +136,19 @@ class CampusFlowService:
             exams=exams,
             assignments=assignments,
             updates=updates,
-            briefing=self._build_briefing(attendance, exams, assignments),
+            briefing=self._build_briefing(
+                attendance,
+                exams,
+                assignments,
+                self.timetable_service.get_timetable(),
+            ),
         )
+
+    def get_timetable(self) -> TimetableResponse:
+        return self.timetable_service.get_timetable()
+
+    def get_timetable_today(self) -> TimetableTodayResponse:
+        return self.timetable_service.get_today()
 
     def apply_feedback(
         self,
@@ -135,8 +156,9 @@ class CampusFlowService:
         source: str = "manual",
         actor_id: str | None = None,
     ) -> AttendanceFeedbackResponse:
+        subjects = self._attendance_subjects()
         subject = next(
-            item for item in self._subjects if item["code"].lower() == payload.subject_code.lower()
+            item for item in subjects if item["code"].lower() == payload.subject_code.lower()
         )
         self.attendance_repository.add_event(payload, source=source, actor_id=actor_id)
         updated = self._apply_saved_events(subject)
@@ -193,6 +215,12 @@ class CampusFlowService:
             )
 
         if "exam" in question:
+            if not overview.exams:
+                return CampusQuestionResponse(
+                    answer="No upcoming exam schedule is uploaded yet. Upload the latest exam PDF to activate exam reminders.",
+                    sources=["Exam reminder store"],
+                    confidence="high",
+                )
             next_exam = overview.exams[0]
             return CampusQuestionResponse(
                 answer=(
@@ -206,12 +234,60 @@ class CampusFlowService:
         pending = [item for item in overview.assignments if item.status in {"pending", "unknown"}]
         return CampusQuestionResponse(
             answer=(
-                "Today you should finish the OS deadlock case study, confirm the DBMS ER diagram "
-                "submission, and attend DBMS because it is closest to the 75% threshold."
+                "Today you should finish pending assignments and attend the next scheduled class "
+                "that is closest to the 75% attendance threshold."
             ),
             sources=["Google Classroom", "Attendance tracker", "Manual assignment entry"],
             confidence="medium" if pending else "high",
         )
+
+    def _attendance_subjects(self) -> list[dict[str, int | str]]:
+        entries = self.timetable_service.repository.list_entries()
+        if not entries:
+            return [subject.copy() for subject in self._demo_subjects]
+
+        subjects: dict[str, dict[str, int | str]] = {}
+        for entry in entries:
+            code = entry.subject_code.upper()
+            if code not in subjects:
+                subjects[code] = {
+                    "code": code,
+                    "name": entry.subject_name,
+                    "faculty": entry.faculty or "TBA",
+                    "held_classes": 0,
+                    "attended_classes": 0,
+                    "next_class": self._format_next_class(code, entries),
+                }
+                continue
+
+            if subjects[code]["faculty"] == "TBA" and entry.faculty:
+                subjects[code]["faculty"] = entry.faculty
+            if subjects[code]["name"] == code and entry.subject_name:
+                subjects[code]["name"] = entry.subject_name
+
+        return list(subjects.values())
+
+    def _format_next_class(self, subject_code: str, entries: list[TimetableEntry]) -> str:
+        now = datetime.now(self.timetable_service.timezone)
+        subject_entries = [
+            entry for entry in entries if entry.subject_code.upper() == subject_code.upper()
+        ]
+        for offset in range(8):
+            class_date = now.date() + timedelta(days=offset)
+            weekday = self.timetable_service.weekdays[class_date.weekday()]
+            for entry in self.timetable_service._sort_entries(
+                [item for item in subject_entries if item.weekday == weekday]
+            ):
+                starts_at = self.timetable_service.class_start_datetime(entry, class_date)
+                if starts_at >= now:
+                    return self._format_class_label(entry)
+        if subject_entries:
+            return self._format_class_label(self.timetable_service._sort_entries(subject_entries)[0])
+        return "No upcoming class"
+
+    def _format_class_label(self, entry: TimetableEntry) -> str:
+        room = f" in {entry.room}" if entry.room else ""
+        return f"{entry.weekday}, {entry.start_time}-{entry.end_time}{room}"
 
     def _build_attendance(self, item: dict[str, int | str]) -> SubjectAttendance:
         held = int(item["held_classes"])
@@ -260,6 +336,7 @@ class CampusFlowService:
         attendance: list[SubjectAttendance],
         exams: list[ExamReminder],
         assignments: list[AssignmentItem],
+        timetable: TimetableResponse,
     ) -> DailyBriefing:
         risky_subjects = [
             subject for subject in attendance if subject.status in {"danger", "critical"}
@@ -278,16 +355,17 @@ class CampusFlowService:
         )
 
         schedule = [
-            "DBMS at 9:00 AM",
-            "OS at 11:00 AM",
-        ]
+            f"{entry.subject_code} at {entry.start_time}"
+            for entry in timetable.today
+        ] or ["No classes scheduled for today"]
         if exams:
             schedule.append(f"Next exam: {exams[0].subject} on {exams[0].exam_date}")
         else:
             schedule.append("No upcoming exam schedule uploaded")
 
+        riskiest = sorted(attendance, key=lambda item: item.attendance_percent)[0]
         suggestions = [
-            "Attend DBMS next because it is closest to the attendance threshold.",
+            f"Attend {riskiest.code} next because it is closest to the attendance threshold.",
             "Finish the OS case study before dinner to avoid a late-night crunch.",
         ]
         if exams and not all(exam.verified_by_user for exam in exams):

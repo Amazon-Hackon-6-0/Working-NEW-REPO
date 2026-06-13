@@ -28,6 +28,9 @@ http://localhost:8000/docs
 GET  /health
 POST /api/v1/agent/plan
 GET  /api/v1/campusflow/overview
+GET  /api/v1/campusflow/timetable
+GET  /api/v1/campusflow/timetable/today
+POST /api/v1/campusflow/timetable/upload-pdf
 POST /api/v1/campusflow/attendance/feedback
 POST /api/v1/campusflow/ask
 GET  /api/v1/integrations/status
@@ -36,6 +39,7 @@ GET  /api/v1/integrations/google/login
 GET  /api/v1/integrations/google/callback
 POST /api/v1/integrations/google/classroom/sync
 POST /api/v1/integrations/discord/daily-feedback
+POST /api/v1/integrations/discord/scheduled-feedback/run-today
 POST /api/v1/integrations/discord/interactions
 GET  /api/v1/integrations/discord/feedback-link
 ```
@@ -59,6 +63,30 @@ curl http://localhost:8000/api/v1/campusflow/overview
 ```
 
 The overview response contains subject-wise attendance status, bunk budget, exam reminders, assignment state, campus updates, and the daily Discord briefing payload.
+
+### Semester Timetable PDF
+
+Upload a text-based semester timetable PDF:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/campusflow/timetable/upload-pdf \
+  -F "file=@/path/to/semester-timetable.pdf"
+```
+
+CampusFlow saves parsed class slots in:
+
+```text
+backend/app/data/timetable.json
+```
+
+Read the weekly timetable and today's classes:
+
+```bash
+curl http://127.0.0.1:8000/api/v1/campusflow/timetable
+curl http://127.0.0.1:8000/api/v1/campusflow/timetable/today
+```
+
+If no timetable has been uploaded, CampusFlow keeps using the demo DBMS, OS, CN, and AI subjects.
 
 ## Real Integration Setup
 
@@ -99,6 +127,7 @@ DISCORD_WEBHOOK_URL=...
 DISCORD_BOT_TOKEN=...
 DISCORD_CHANNEL_ID=...
 PUBLIC_BASE_URL=https://your-public-tunnel.example.com
+DISCORD_SCHEDULER_ENABLED=false
 ```
 
 If `DISCORD_BOT_TOKEN` and `DISCORD_CHANNEL_ID` are present, CampusFlow sends native Discord button prompts through the Bot API.
@@ -134,6 +163,24 @@ Then send a daily feedback prompt:
 curl -X POST http://127.0.0.1:8000/api/v1/integrations/discord/daily-feedback \
   -H "Content-Type: application/json" \
   -d '{"subject_code":"DBMS"}'
+```
+
+CampusFlow can also run a lightweight scheduler in the FastAPI process. It is disabled by default for safe local demos. To enable automatic class-end prompts, set:
+
+```text
+DISCORD_SCHEDULER_ENABLED=true
+```
+
+When enabled, every minute it checks today's timetable in the Asia/Kolkata timezone and sends a feedback prompt after each scheduled class ends. Sent prompt keys are stored locally in:
+
+```text
+backend/app/data/discord_notification_log.json
+```
+
+For demos, keep `DISCORD_SCHEDULER_ENABLED=false` and trigger today's scheduled prompts immediately with the manual route or the dashboard button:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/integrations/discord/scheduled-feedback/run-today
 ```
 
 ## Next Backend Tasks
