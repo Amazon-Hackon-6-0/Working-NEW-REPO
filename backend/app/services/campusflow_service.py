@@ -29,6 +29,7 @@ class CampusFlowService:
     """Deterministic MVP logic for the CampusFlow hackathon prototype."""
 
     threshold = 75.0
+    default_planned_hours = 100.0
 
     def __init__(
         self,
@@ -46,32 +47,44 @@ class CampusFlowService:
                 "code": "DBMS",
                 "name": "Database Management Systems",
                 "faculty": "Prof. Mehra",
-                "held_classes": 26,
-                "attended_classes": 20,
+                "held_classes": 0,
+                "attended_classes": 0,
+                "missed_classes": 0,
+                "class_hours": 1.0,
+                "planned_hours": self.default_planned_hours,
                 "next_class": "Monday, 9:00 AM",
             },
             {
                 "code": "OS",
                 "name": "Operating Systems",
                 "faculty": "Dr. Iyer",
-                "held_classes": 28,
-                "attended_classes": 22,
+                "held_classes": 0,
+                "attended_classes": 0,
+                "missed_classes": 0,
+                "class_hours": 1.0,
+                "planned_hours": self.default_planned_hours,
                 "next_class": "Monday, 11:00 AM",
             },
             {
                 "code": "CN",
                 "name": "Computer Networks",
                 "faculty": "Prof. Rao",
-                "held_classes": 24,
-                "attended_classes": 21,
+                "held_classes": 0,
+                "attended_classes": 0,
+                "missed_classes": 0,
+                "class_hours": 1.0,
+                "planned_hours": self.default_planned_hours,
                 "next_class": "Tuesday, 10:00 AM",
             },
             {
                 "code": "AI",
                 "name": "Artificial Intelligence",
                 "faculty": "Dr. Sen",
-                "held_classes": 18,
-                "attended_classes": 16,
+                "held_classes": 0,
+                "attended_classes": 0,
+                "missed_classes": 0,
+                "class_hours": 1.0,
+                "planned_hours": self.default_planned_hours,
                 "next_class": "Wednesday, 2:00 PM",
             },
         ]
@@ -183,19 +196,27 @@ class CampusFlowService:
             )
         ]
 
-    def _apply_saved_events(self, subject: dict[str, int | str]) -> dict[str, int | str]:
+    def _apply_saved_events(self, subject: dict[str, int | float | str]) -> dict[str, int | float | str]:
         updated = subject.copy()
         held_classes = int(updated["held_classes"])
         attended_classes = int(updated["attended_classes"])
+        missed_classes = int(updated.get("missed_classes", 0))
+        missed_hours = float(updated.get("missed_hours", 0.0))
+        class_hours = float(updated.get("class_hours", 1.0))
 
         for event in self.attendance_repository.events_for_subject(str(subject["code"])):
             if event["class_status"] == "held":
                 held_classes += 1
                 if event["attended"]:
                     attended_classes += 1
+                else:
+                    missed_classes += 1
+                    missed_hours += class_hours
 
         updated["held_classes"] = held_classes
         updated["attended_classes"] = attended_classes
+        updated["missed_classes"] = missed_classes
+        updated["missed_hours"] = round(missed_hours, 2)
         return updated
 
     def answer_question(self, payload: CampusQuestionRequest) -> CampusQuestionResponse:
@@ -241,12 +262,12 @@ class CampusFlowService:
             confidence="medium" if pending else "high",
         )
 
-    def _attendance_subjects(self) -> list[dict[str, int | str]]:
-        entries = self.timetable_service.repository.list_entries()
+    def _attendance_subjects(self) -> list[dict[str, int | float | str]]:
+        entries = self.timetable_service.list_effective_entries()
         if not entries:
             return [subject.copy() for subject in self._demo_subjects]
 
-        subjects: dict[str, dict[str, int | str]] = {}
+        subjects: dict[str, dict[str, int | float | str]] = {}
         for entry in entries:
             code = entry.subject_code.upper()
             if code not in subjects:
@@ -256,6 +277,9 @@ class CampusFlowService:
                     "faculty": entry.faculty or "TBA",
                     "held_classes": 0,
                     "attended_classes": 0,
+                    "missed_classes": 0,
+                    "class_hours": self._class_hours(entry),
+                    "planned_hours": entry.planned_hours or self.default_planned_hours,
                     "next_class": self._format_next_class(code, entries),
                 }
                 continue
@@ -264,8 +288,21 @@ class CampusFlowService:
                 subjects[code]["faculty"] = entry.faculty
             if subjects[code]["name"] == code and entry.subject_name:
                 subjects[code]["name"] = entry.subject_name
+            if subjects[code]["planned_hours"] == self.default_planned_hours and entry.planned_hours:
+                subjects[code]["planned_hours"] = entry.planned_hours
 
         return list(subjects.values())
+
+    def _class_hours(self, entry: TimetableEntry) -> float:
+        start = self.timetable_service._parse_clock(entry.start_time)
+        end = self.timetable_service._parse_clock(entry.end_time)
+        if not start or not end:
+            return 1.0
+        start_minutes = start.hour * 60 + start.minute
+        end_minutes = end.hour * 60 + end.minute
+        if end_minutes <= start_minutes:
+            return 1.0
+        return round((end_minutes - start_minutes) / 60, 2)
 
     def _format_next_class(self, subject_code: str, entries: list[TimetableEntry]) -> str:
         now = datetime.now(self.timetable_service.timezone)
@@ -289,10 +326,16 @@ class CampusFlowService:
         room = f" in {entry.room}" if entry.room else ""
         return f"{entry.weekday}, {entry.start_time}-{entry.end_time}{room}"
 
-    def _build_attendance(self, item: dict[str, int | str]) -> SubjectAttendance:
+    def _build_attendance(self, item: dict[str, int | float | str]) -> SubjectAttendance:
         held = int(item["held_classes"])
         attended = int(item["attended_classes"])
-        percent = round((attended / held) * 100, 1) if held else 100.0
+        missed_classes = int(item.get("missed_classes", 0))
+        class_hours = float(item.get("class_hours", 1.0))
+        planned_hours = float(item.get("planned_hours", self.default_planned_hours))
+        planned_classes = max(1, floor(planned_hours / class_hours)) if class_hours else 0
+        missed_hours = float(item.get("missed_hours", missed_classes * class_hours))
+        attended_planned_hours = max(0.0, planned_hours - missed_hours)
+        percent = round((attended_planned_hours / planned_hours) * 100, 1) if planned_hours else 100.0
         gap = abs(percent - self.threshold)
 
         if percent < self.threshold:
@@ -304,8 +347,8 @@ class CampusFlowService:
         else:
             status = "safe"
 
-        bunk_budget = self._bunk_budget(attended, held)
-        classes_needed = self._classes_needed(attended, held)
+        bunk_budget = self._bunk_budget_from_hours(missed_hours, planned_hours, class_hours)
+        classes_needed = self._classes_needed_from_hours(missed_hours, planned_hours)
 
         return SubjectAttendance(
             code=str(item["code"]),
@@ -313,6 +356,11 @@ class CampusFlowService:
             faculty=str(item["faculty"]),
             held_classes=held,
             attended_classes=attended,
+            missed_classes=missed_classes,
+            planned_classes=planned_classes,
+            class_hours=class_hours,
+            planned_hours=planned_hours,
+            missed_hours=round(missed_hours, 2),
             threshold=self.threshold,
             attendance_percent=percent,
             status=status,
@@ -330,6 +378,23 @@ class CampusFlowService:
         while held + needed and ((attended + needed) / (held + needed)) * 100 < self.threshold:
             needed += 1
         return needed
+
+    def _bunk_budget_from_hours(
+        self,
+        missed_hours: float,
+        planned_hours: float,
+        class_hours: float,
+    ) -> int:
+        allowed_missed_hours = planned_hours * (1 - self.threshold / 100)
+        remaining_hours = max(0.0, allowed_missed_hours - missed_hours)
+        if class_hours <= 0:
+            return 0
+        return floor(remaining_hours / class_hours)
+
+    def _classes_needed_from_hours(self, missed_hours: float, planned_hours: float) -> int:
+        if planned_hours <= 0:
+            return 0
+        return 0 if ((planned_hours - missed_hours) / planned_hours) * 100 >= self.threshold else 1
 
     def _build_briefing(
         self,

@@ -83,22 +83,51 @@ const updates = [
 ];
 
 function mapOverviewSubject(subject) {
+  const percent = Number.isFinite(Number(subject.attendance_percent))
+    ? Number(subject.attendance_percent)
+    : 100;
+  const held = Number(subject.held_classes ?? 0);
+  const attended = Number(subject.attended_classes ?? 0);
+  const classHours = Number(subject.class_hours ?? 1) || 1;
+  const plannedHours = Number(subject.planned_hours ?? 100) || 100;
+  const providedPlannedClasses = Number(subject.planned_classes);
+  const plannedClasses =
+    Number.isFinite(providedPlannedClasses) && providedPlannedClasses > 0
+      ? providedPlannedClasses
+      : Math.max(1, Math.floor(plannedHours / classHours));
+  const missedClasses = Number(subject.missed_classes ?? Math.max(0, held - attended));
+  const missedHours = Number(subject.missed_hours ?? missedClasses * classHours);
+  const providedBunkBudget = Number(subject.bunk_budget);
+  const bunkBudget =
+    Number.isFinite(providedBunkBudget)
+      ? providedBunkBudget
+      : Math.max(0, Math.floor((plannedHours * 0.25 - missedHours) / classHours));
+  const status = subject.status || "safe";
+
   return {
     code: subject.code,
     name: subject.name,
     faculty: subject.faculty,
-    held: subject.held_classes,
-    attended: subject.attended_classes,
+    held,
+    attended,
     nextClass: subject.next_class,
-    percent: subject.attendance_percent,
-    bunkBudget: subject.bunk_budget,
-    classesNeeded: subject.classes_needed,
-    state: subject.status.charAt(0).toUpperCase() + subject.status.slice(1),
+    percent,
+    bunkBudget,
+    classesNeeded: Number(subject.classes_needed ?? 0),
+    heldClasses: held,
+    missedClasses,
+    plannedClasses,
+    classHours,
+    plannedHours,
+    missedHours,
+    state: status.charAt(0).toUpperCase() + status.slice(1),
   };
 }
 
 function getAttendance(subject, threshold) {
-  const percent = Number(((subject.attended / subject.held) * 100).toFixed(1));
+  const percent = subject.held
+    ? Number(((subject.attended / subject.held) * 100).toFixed(1))
+    : 100;
   const maxTotalClasses = Math.floor(subject.attended / (threshold / 100));
   const bunkBudget = Math.max(0, maxTotalClasses - subject.held);
   let classesNeeded = 0;
@@ -115,23 +144,39 @@ function getAttendance(subject, threshold) {
   else if (Math.abs(percent - threshold) <= 10) state = "Danger";
   else if (percent < 85) state = "Watch";
 
-  return { percent, bunkBudget, classesNeeded, state };
+  return {
+    percent,
+    bunkBudget,
+    classesNeeded,
+    heldClasses: subject.held,
+    missedClasses: Math.max(0, subject.held - subject.attended),
+    plannedClasses: 100,
+    classHours: 1,
+    plannedHours: 100,
+    missedHours: Math.max(0, subject.held - subject.attended),
+    state,
+  };
 }
 
 function statusClass(value) {
-  return value.toLowerCase();
+  return String(value || "safe").toLowerCase();
 }
 
-function formatTimetableClass(entry) {
-  if (!entry) return "No class scheduled";
+function formatNextTimetableClass(entry, startsAt) {
+  if (!entry) return "No upcoming class";
   const room = entry.room ? ` · ${entry.room}` : "";
-  return `${entry.subject_code} · ${entry.weekday} ${entry.start_time}-${entry.end_time}${room}`;
+  const dateLabel = startsAt
+    ? new Date(startsAt).toLocaleDateString("en-IN", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      })
+    : entry.weekday;
+  return `${entry.subject_code} · ${dateLabel} · ${entry.start_time}-${entry.end_time}${room}`;
 }
 
 export default function Home() {
   const threshold = 75;
-  const [selectedSubject, setSelectedSubject] = useState(subjects[0].code);
-  const [feedback, setFeedback] = useState("held-attended");
   const [integrationStatus, setIntegrationStatus] = useState(null);
   const [integrationMessage, setIntegrationMessage] = useState(
     "Connect Google Classroom and Discord when credentials are configured.",
@@ -177,9 +222,6 @@ export default function Home() {
       .filter((item) => item.classes.length);
   }, [timetable]);
 
-  const activeSubject = attendance.find((item) => item.code === selectedSubject) ||
-    attendance[0];
-  const effectiveSelectedSubject = activeSubject?.code || selectedSubject;
   const liveAssignments = overview?.assignments?.length
     ? overview.assignments.map((assignment) => ({
         title: assignment.title,
@@ -205,7 +247,10 @@ export default function Home() {
     (assignment) => assignment.state !== "Submitted",
   ).length;
   const todayClassCount = timetable?.today_count ?? 0;
-  const nextClassLabel = formatTimetableClass(timetable?.next_class);
+  const nextClassLabel = formatNextTimetableClass(
+    timetable?.next_class,
+    timetable?.next_class_starts_at,
+  );
 
   async function refreshCampusFlowData() {
     await fetch(`${API_BASE}/campusflow/overview`)
@@ -263,21 +308,6 @@ export default function Home() {
     refreshCampusFlowData();
   }
 
-  async function sendDiscordPrompt() {
-    const response = await fetch(`${API_BASE}/integrations/discord/daily-feedback`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subject_code: effectiveSelectedSubject }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      setIntegrationMessage(data.detail || "Discord prompt failed.");
-      return;
-    }
-    setIntegrationMessage(data.message);
-    refreshCampusFlowData();
-  }
-
   async function runScheduledDiscordPrompts() {
     const response = await fetch(
       `${API_BASE}/integrations/discord/scheduled-feedback/run-today`,
@@ -289,7 +319,7 @@ export default function Home() {
       return;
     }
     setIntegrationMessage(
-      `${data.sent} sent, ${data.skipped} skipped. ${data.messages.join(" ")}`,
+      `${data.sent} daily Discord message sent for ${data.attempted} class${data.attempted === 1 ? "" : "es"}. ${data.messages.join(" ")}`,
     );
     refreshCampusFlowData();
   }
@@ -499,75 +529,40 @@ export default function Home() {
 
             <div className="attendance-list">
               <p className="live-note">{overviewMessage}</p>
-              {attendance.map((subject) => (
-                <article className="subject-row" key={subject.code}>
-                  <div>
-                    <strong>{subject.code}</strong>
-                    <span>{subject.name}</span>
-                  </div>
-                  <div className="progress-wrap" aria-label={`${subject.code} attendance`}>
-                    <span
-                      className={`progress ${statusClass(subject.state)}`}
-                      style={{ width: `${subject.percent}%` }}
-                    />
-                  </div>
-                  <div className="subject-stats">
-                    <strong>{subject.percent}%</strong>
-                    <span>{subject.attended}/{subject.held}</span>
-                  </div>
-                  <span className={`pill ${statusClass(subject.state)}`}>
-                    {subject.state}
-                  </span>
-                  <div className="bunk">
-                    <strong>{subject.bunkBudget}</strong>
-                    <span>bunks left</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
+              {attendance.map((subject) => {
+                const progressWidth = Math.max(
+                  0,
+                  Math.min(100, Number(subject.percent) || 0)
+                );
 
-          <section className="panel feedback-panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Class reality check</p>
-                <h3>Submit feedback</h3>
-              </div>
-            </div>
-            <label>
-              Subject
-              <select
-                value={effectiveSelectedSubject}
-                onChange={(event) => setSelectedSubject(event.target.value)}
-              >
-                {attendance.map((subject) => (
-                  <option key={subject.code} value={subject.code}>
-                    {subject.code} - {subject.nextClass}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Class status
-              <select
-                value={feedback}
-                onChange={(event) => setFeedback(event.target.value)}
-              >
-                <option value="held-attended">Held and attended</option>
-                <option value="held-missed">Held but missed</option>
-                <option value="cancelled">Cancelled</option>
-                <option value="holiday">Holiday</option>
-                <option value="teacher-absent">Teacher absent</option>
-              </select>
-            </label>
-            <div className="feedback-result">
-              <span>Preview</span>
-              <strong>
-                {activeSubject.code} stays at {activeSubject.percent}% today
-              </strong>
-              <p>
-                If class was cancelled, it will not affect the attendance denominator.
-              </p>
+                return (
+                  <article className="subject-row" key={subject.code}>
+                    <div>
+                      <strong>{subject.code}</strong>
+                      <span>{subject.name}</span>
+                    </div>
+                    <div className="progress-wrap" aria-label={`${subject.code} attendance`}>
+                      <span
+                        className={`progress ${statusClass(subject.state)}`}
+                        style={{ width: `${progressWidth}%` }}
+                      />
+                    </div>
+                    <div className="subject-stats">
+                      <strong>{subject.percent}%</strong>
+                      <span>
+                        {subject.heldClasses} / {subject.plannedClasses} classes
+                      </span>
+                    </div>
+                    <span className={`pill ${statusClass(subject.state)}`}>
+                      {subject.state}
+                    </span>
+                    <div className="bunk">
+                      <strong>{subject.bunkBudget}</strong>
+                      <span>bunks left</span>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </section>
         </section>
@@ -604,11 +599,8 @@ export default function Home() {
             <button type="button" onClick={syncGoogleClassroom}>
               Sync assignments
             </button>
-            <button type="button" onClick={sendDiscordPrompt}>
-              Send button prompt
-            </button>
             <button type="button" onClick={runScheduledDiscordPrompts}>
-              Run today&apos;s prompts
+              Run today&apos;s prompt
             </button>
           </div>
           <p className="integration-message">{integrationMessage}</p>
@@ -750,7 +742,7 @@ export default function Home() {
           <div className="event-list">
             {attendanceEvents.length === 0 ? (
               <p className="empty-state">
-                No feedback events yet. Send a Discord prompt and click a button to
+                No feedback events yet. Run today&apos;s prompt and click a Discord button to
                 create the first saved event.
               </p>
             ) : (

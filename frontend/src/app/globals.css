@@ -182,8 +182,7 @@ input {
 .bunk span,
 .answer,
 .briefing p,
-.update-list p,
-.feedback-result p {
+.update-list p {
   color: var(--muted);
 }
 
@@ -198,7 +197,7 @@ input {
 
 .grid-main {
   display: grid;
-  grid-template-columns: minmax(0, 1.8fr) minmax(300px, 0.8fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -236,7 +235,6 @@ input {
 .stack,
 .briefing,
 .update-list,
-.feedback-panel,
 .integration-actions,
 .event-list {
   display: grid;
@@ -246,6 +244,9 @@ input {
 .subject-row {
   border: 1px solid var(--line);
   border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(140px, 2fr) 128px 88px 104px;
   min-height: 78px;
   padding: 13px;
 }
@@ -253,15 +254,14 @@ input {
 .subject-row > div:first-child {
   display: grid;
   gap: 4px;
-  min-width: 170px;
+  min-width: 0;
 }
 
 .progress-wrap {
   background: #edf1f7;
   border-radius: 999px;
-  flex: 1;
   height: 10px;
-  min-width: 120px;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -274,12 +274,13 @@ input {
 .bunk {
   display: grid;
   gap: 4px;
-  min-width: 58px;
+  min-width: 0;
   text-align: right;
 }
 
-.bunk {
-  min-width: 70px;
+.subject-stats span,
+.bunk span {
+  white-space: nowrap;
 }
 
 .pill {
@@ -343,7 +344,6 @@ select {
   padding: 0 12px;
 }
 
-.feedback-result,
 .question-box {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -353,7 +353,6 @@ select {
   padding: 14px;
 }
 
-.feedback-result span,
 .question-box span {
   color: var(--muted);
   font-size: 12px;
@@ -361,7 +360,6 @@ select {
   text-transform: uppercase;
 }
 
-.feedback-result p,
 .answer,
 .briefing p,
 .update-list p {
@@ -648,10 +646,14 @@ select {
   }
 
   .topbar,
-  .subject-row,
   .list-item {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .subject-row {
+    align-items: stretch;
+    grid-template-columns: 1fr;
   }
 
   .event-row {

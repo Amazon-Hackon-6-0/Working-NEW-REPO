@@ -29,10 +29,6 @@ class ClassroomSyncResponse(BaseModel):
     message: str
 
 
-class DiscordPromptRequest(BaseModel):
-    subject_code: str | None = None
-
-
 class DiscordPromptResponse(BaseModel):
     sent: bool
     message: str

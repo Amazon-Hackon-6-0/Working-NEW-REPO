@@ -88,6 +88,7 @@ class TimetableService:
                 ),
             )
 
+        entries = self._class_entries(entries)
         payload = self.repository.replace_all(entries, filename)
         return TimetableUploadResponse(
             source_name=filename,
@@ -98,7 +99,7 @@ class TimetableService:
 
     def get_timetable(self) -> TimetableResponse:
         payload = self.repository.read_payload()
-        uploaded_entries = self.repository.list_entries()
+        uploaded_entries = self._class_entries(self.repository.list_entries())
         has_uploaded_timetable = bool(uploaded_entries)
         entries = uploaded_entries or self.demo_entries()
         return self._build_response(
@@ -121,7 +122,7 @@ class TimetableService:
         )
 
     def list_effective_entries(self) -> list[TimetableEntry]:
-        return self.repository.list_entries() or self.demo_entries()
+        return self._class_entries(self.repository.list_entries()) or self.demo_entries()
 
     def classes_for_date(self, class_date: date) -> list[TimetableEntry]:
         weekday = self.weekdays[class_date.weekday()]
@@ -245,6 +246,7 @@ class TimetableService:
         entries: list[TimetableEntry] = []
         current_weekday: str | None = None
         header_weekdays: list[str] = []
+        planned_hours_by_subject = self._planned_hours_by_subject(text)
 
         for line in self._normalize_lines(text):
             weekdays_in_line = self._weekdays_in(line)
@@ -273,7 +275,12 @@ class TimetableService:
             if header_weekdays:
                 entries.extend(self._entries_from_header_row(line, header_weekdays, time_range))
 
-        return self._dedupe_entries(entries)
+        entries = self._dedupe_entries(entries)
+        for entry in entries:
+            planned_hours = planned_hours_by_subject.get(entry.subject_code.upper())
+            if planned_hours:
+                entry.planned_hours = planned_hours
+        return entries
 
     def _entries_from_header_row(
         self,
@@ -325,6 +332,35 @@ class TimetableService:
             end_time=time_range["end"],
             room=room,
         )
+
+    def _planned_hours_by_subject(self, text: str) -> dict[str, float]:
+        totals: dict[str, float] = {}
+        patterns = [
+            re.compile(
+                r"\b(?P<code>[A-Z]{2,6}(?:\s*-?\s*\d{2,4}[A-Z]?)?)\b[^\n]{0,80}?"
+                r"(?:total\s*(?:semester\s*)?hours?|planned\s*hours?|credits?\s*hours?)"
+                r"\s*[:=-]?\s*(?P<hours>\d{1,3}(?:\.\d+)?)",
+                re.I,
+            ),
+            re.compile(
+                r"(?:total\s*(?:semester\s*)?hours?|planned\s*hours?|credits?\s*hours?)"
+                r"\s*[:=-]?\s*(?P<hours>\d{1,3}(?:\.\d+)?)[^\n]{0,80}?"
+                r"\b(?P<code>[A-Z]{2,6}(?:\s*-?\s*\d{2,4}[A-Z]?)?)\b",
+                re.I,
+            ),
+        ]
+
+        for line in self._normalize_lines(text):
+            for pattern in patterns:
+                match = pattern.search(line)
+                if not match:
+                    continue
+                hours = float(match.group("hours"))
+                if hours <= 0:
+                    continue
+                code = re.sub(r"\s+", "", match.group("code")).replace("-", "").upper()
+                totals[code] = hours
+        return totals
 
     def _subject_text(self, line: str, weekday: str, time_text: str) -> str:
         cleaned = line.replace(time_text, " ")
@@ -383,10 +419,26 @@ class TimetableService:
             cleaned = re.sub(rf"\b{flexible_code}\b", " ", cleaned, flags=re.I)
         cleaned = re.sub(r"\s*[|,;/]\s*", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" -:,")
+        cleaned = re.sub(r"\s+\d{1,4}$", "", cleaned).strip(" -:,")
 
         if not cleaned and subject_code:
             return subject_code.upper()
         return cleaned[:120]
+
+    def _class_entries(self, entries: list[TimetableEntry]) -> list[TimetableEntry]:
+        return [
+            self._clean_entry_for_display(entry)
+            for entry in entries
+            if not self._is_lab_entry(entry)
+        ]
+
+    def _is_lab_entry(self, entry: TimetableEntry) -> bool:
+        subject_words = {word.lower() for word in re.findall(r"[A-Za-z]+", entry.subject_name)}
+        return bool(subject_words & {"lab", "labs", "practical", "practicals"})
+
+    def _clean_entry_for_display(self, entry: TimetableEntry) -> TimetableEntry:
+        subject_name = re.sub(r"\s+\d{1,4}$", "", entry.subject_name).strip(" -:,")
+        return entry.model_copy(update={"subject_name": subject_name or entry.subject_name})
 
     def _extract_faculty(self, text: str) -> str | None:
         labeled = re.search(

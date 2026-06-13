@@ -66,9 +66,6 @@ class DiscordService:
         class_date = now.date()
         today_classes = timetable_service.classes_for_date(class_date)
         messages: list[str] = []
-        sent = 0
-        skipped = 0
-        attempted = 0
 
         if not self.is_configured:
             return DiscordScheduledPromptResponse(
@@ -81,42 +78,45 @@ class DiscordService:
                 ],
             )
 
-        for class_entry in today_classes:
-            ended_at = timetable_service.class_end_datetime(class_entry, class_date)
-            if not include_future_today and ended_at > now:
-                continue
+        due_classes = [
+            class_entry
+            for class_entry in today_classes
+            if include_future_today
+            or timetable_service.class_end_datetime(class_entry, class_date) <= now
+        ]
+        attempted = len(due_classes)
 
-            attempted += 1
-            notification_key = self._notification_key(class_entry, class_date)
-            if self._notification_already_sent(notification_key):
-                skipped += 1
-                messages.append(
-                    f"Skipped duplicate prompt for {class_entry.subject_code} at {class_entry.end_time}."
-                )
-                continue
+        if not due_classes:
+            messages.append("No classes found for today's timetable.")
+            return DiscordScheduledPromptResponse(
+                sent=0,
+                skipped=0,
+                attempted=0,
+                date=class_date.isoformat(),
+                messages=messages,
+            )
 
-            subject = self._subject_for_timetable_entry(class_entry)
-            try:
-                if self.bot_configured:
-                    response = await self._send_bot_button_prompt(subject, class_entry)
-                else:
-                    response = await self._send_webhook_link_prompt(subject, class_entry)
-            except Exception as exc:
-                messages.append(
-                    f"Failed to send {class_entry.subject_code} prompt: {exc}"
-                )
-                continue
+        try:
+            if self.bot_configured:
+                response = await self._send_bot_today_prompt(due_classes, class_date)
+            else:
+                response = await self._send_webhook_today_prompt(due_classes, class_date)
+        except Exception as exc:
+            messages.append(f"Failed to send today's class prompt: {exc}")
+            return DiscordScheduledPromptResponse(
+                sent=0,
+                skipped=0,
+                attempted=attempted,
+                date=class_date.isoformat(),
+                messages=messages,
+            )
 
-            self._record_notification(notification_key, class_entry, class_date, response.message)
-            sent += 1
-            messages.append(response.message)
-
-        if attempted == 0:
-            messages.append("No class prompts are due for today.")
+        self._record_daily_notification(due_classes, class_date, response.message)
+        messages.append(response.message)
 
         return DiscordScheduledPromptResponse(
-            sent=sent,
-            skipped=skipped,
+            sent=1,
+            skipped=0,
             attempted=attempted,
             date=class_date.isoformat(),
             messages=messages,
@@ -271,8 +271,124 @@ class DiscordService:
             feedback_url=feedback_base_url,
         )
 
+    async def _send_bot_today_prompt(
+        self,
+        classes: list[TimetableEntry],
+        class_date: date,
+    ) -> DiscordPromptResponse:
+        feedback_url = f"{settings.public_base_url}/api/v1/integrations/discord/interactions"
+        overview_by_code = {
+            subject.code.upper(): subject for subject in self.campusflow_service.get_overview().attendance
+        }
+        weekday = self.campusflow_service.timetable_service.weekdays[class_date.weekday()]
+        lines = [
+            f"**{index}. {entry.subject_code}** · {entry.start_time}-{entry.end_time}"
+            f"{f' · {entry.room}' if entry.room else ''}"
+            for index, entry in enumerate(classes, start=1)
+        ]
+        components = []
+        for entry in classes[:5]:
+            code = entry.subject_code.upper()
+            slot = self._class_slot_token(class_date, entry)
+            components.append(
+                {
+                    "type": 1,
+                    "components": [
+                        self._button(f"attendance:{code}:held:attended:{slot}", f"{code} attended", 3),
+                        self._button(f"attendance:{code}:held:missed:{slot}", f"{code} missed", 4),
+                        self._button(f"attendance:{code}:cancelled:false:{slot}", f"{code} cancelled", 2),
+                        self._button(f"attendance:{code}:teacher_absent:false:{slot}", f"{code} absent", 2),
+                    ],
+                }
+            )
+
+        payload = {
+            "allowed_mentions": {"parse": []},
+            "content": (
+                f"**CampusFlow daily class check** for **{weekday}, {class_date.isoformat()}**\n"
+                "Use these once you know the reality of today's classes, even before class time."
+            ),
+            "embeds": [
+                {
+                    "title": "Today's classes",
+                    "description": "\n".join(lines),
+                    "color": 3447003,
+                    "fields": [
+                        {
+                            "name": "Attendance rule",
+                            "value": "Cancelled and teacher-absent classes do not change attendance. Missed classes subtract their class duration from the 100-hour plan.",
+                        },
+                        {
+                            "name": "Current attendance",
+                            "value": "\n".join(
+                                f"{entry.subject_code}: "
+                                f"{overview_by_code.get(entry.subject_code.upper()).attendance_percent if overview_by_code.get(entry.subject_code.upper()) else 100}%"
+                                for entry in classes
+                            ),
+                        },
+                    ],
+                }
+            ],
+            "components": components,
+        }
+
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                f"https://discord.com/api/v10/channels/{settings.discord_channel_id}/messages",
+                headers={
+                    "Authorization": f"Bot {settings.discord_bot_token}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+        response.raise_for_status()
+        return DiscordPromptResponse(
+            sent=True,
+            message=f"Discord daily prompt sent with {len(classes)} class(es).",
+            feedback_url=feedback_url,
+        )
+
+    async def _send_webhook_today_prompt(
+        self,
+        classes: list[TimetableEntry],
+        class_date: date,
+    ) -> DiscordPromptResponse:
+        feedback_base_url = f"{settings.public_base_url}/api/v1/integrations/discord/feedback-link"
+        weekday = self.campusflow_service.timetable_service.weekdays[class_date.weekday()]
+        class_blocks = []
+        for entry in classes:
+            code = entry.subject_code.upper()
+            label = self._class_label_for_entry(entry)
+            attended_url = f"{feedback_base_url}?subject_code={code}&class_status=held&attended=true"
+            missed_url = f"{feedback_base_url}?subject_code={code}&class_status=held&attended=false"
+            cancelled_url = f"{feedback_base_url}?subject_code={code}&class_status=cancelled&attended=false"
+            teacher_absent_url = f"{feedback_base_url}?subject_code={code}&class_status=teacher_absent&attended=false"
+            class_blocks.append(
+                f"**{code}** · {label}\n"
+                f"[Attended]({attended_url}) · [Missed]({missed_url}) · "
+                f"[Cancelled]({cancelled_url}) · [Teacher absent]({teacher_absent_url})"
+            )
+
+        payload = {
+            "username": "CampusFlow",
+            "allowed_mentions": {"parse": []},
+            "content": (
+                f"**CampusFlow daily class check** for **{weekday}, {class_date.isoformat()}**\n\n"
+                + "\n\n".join(class_blocks)
+            ),
+        }
+
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(f"{settings.discord_webhook_url}?wait=true", json=payload)
+        response.raise_for_status()
+        return DiscordPromptResponse(
+            sent=True,
+            message=f"Discord daily link prompt sent with {len(classes)} class(es).",
+            feedback_url=feedback_base_url,
+        )
+
     def _apply_attendance_interaction(self, custom_id: str, actor_id: str | None = None) -> str:
-        _, subject_code, class_status, attended_value = custom_id.split(":")
+        _, subject_code, class_status, attended_value, *_ = custom_id.split(":")
         response = self.campusflow_service.apply_feedback(
             AttendanceFeedback(
                 subject_code=subject_code,
@@ -339,8 +455,18 @@ class DiscordService:
     ) -> str:
         if not class_entry:
             return subject.next_class
+        return self._class_label_for_entry(class_entry)
+
+    def _class_label_for_entry(self, class_entry: TimetableEntry) -> str:
         room = f" in {class_entry.room}" if class_entry.room else ""
         return f"{class_entry.weekday}, {class_entry.start_time}-{class_entry.end_time}{room}"
+
+    def _class_slot_token(self, class_date: date, class_entry: TimetableEntry) -> str:
+        return (
+            f"{class_date.isoformat()}_"
+            f"{class_entry.start_time.replace(':', '')}_"
+            f"{class_entry.end_time.replace(':', '')}"
+        )
 
     def _notification_key(self, class_entry: TimetableEntry, class_date: date) -> str:
         room = (class_entry.room or "no-room").lower().replace(" ", "-")
@@ -373,6 +499,30 @@ class DiscordService:
                     "start_time": class_entry.start_time,
                     "end_time": class_entry.end_time,
                     "room": class_entry.room,
+                    "sent_at": datetime.now(
+                        self.campusflow_service.timetable_service.timezone
+                    ).isoformat(),
+                    "message": message,
+                }
+            )
+            self.notification_log_path.write_text(
+                json.dumps(log_items, indent=2),
+                encoding="utf-8",
+            )
+
+    def _record_daily_notification(
+        self,
+        classes: list[TimetableEntry],
+        class_date: date,
+        message: str,
+    ) -> None:
+        with self._notification_log_lock:
+            log_items = self._read_notification_log()
+            log_items.append(
+                {
+                    "notification_key": f"{class_date.isoformat()}:daily-run",
+                    "class_date": class_date.isoformat(),
+                    "subject_code": ",".join(entry.subject_code.upper() for entry in classes),
                     "sent_at": datetime.now(
                         self.campusflow_service.timetable_service.timezone
                     ).isoformat(),

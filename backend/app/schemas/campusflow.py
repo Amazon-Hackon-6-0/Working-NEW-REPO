@@ -25,6 +25,11 @@ class SubjectAttendance(BaseModel):
     faculty: str
     held_classes: int
     attended_classes: int
+    missed_classes: int = 0
+    planned_classes: int = 0
+    class_hours: float = 1.0
+    planned_hours: float = 100.0
+    missed_hours: float = 0.0
     threshold: float = 75
     attendance_percent: float
     status: AttendanceStatus
@@ -64,6 +69,7 @@ class TimetableEntry(BaseModel):
     start_time: str
     end_time: str
     room: str | None = None
+    planned_hours: float | None = None
 
 
 class TimetableUploadResponse(BaseModel):
