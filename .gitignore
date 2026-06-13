@@ -12,7 +12,11 @@ __pycache__/
 venv/
 .venv/
 node_modules/
+.npm-cache/
+.next/
 dist/
 build/
 
 demo-recording/
+pdf_preview/
+backend/data/

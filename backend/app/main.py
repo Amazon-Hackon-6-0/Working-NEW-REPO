@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import agent, health
+from app.api.routes import agent, campusflow, health, integrations
 from app.core.config import settings
 
 
@@ -22,6 +22,8 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(agent.router, prefix=settings.api_v1_prefix)
+    app.include_router(campusflow.router, prefix=settings.api_v1_prefix)
+    app.include_router(integrations.router, prefix=settings.api_v1_prefix)
 
     return app
 
