@@ -6,6 +6,7 @@ from app.schemas.campusflow import AttendanceFeedback, ClassStatus
 
 from app.schemas.integrations import (
     ClassroomSyncResponse,
+    DiscordPromptResponse,
     DiscordScheduledPromptResponse,
     GoogleAuthUrlResponse,
     GoogleCallbackResponse,
@@ -76,6 +77,16 @@ async def run_today_discord_scheduled_feedback() -> DiscordScheduledPromptRespon
         return await discord_service.send_scheduled_class_prompts(include_future_today=True)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Discord scheduled prompts failed: {exc}") from exc
+
+
+@router.post("/discord/briefing", response_model=DiscordPromptResponse)
+async def send_discord_briefing() -> DiscordPromptResponse:
+    try:
+        return await discord_service.send_briefing()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Discord briefing failed: {exc}") from exc
 
 
 @router.post("/discord/interactions")

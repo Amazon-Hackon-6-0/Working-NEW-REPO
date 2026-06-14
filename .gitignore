@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.swp
 
 .env
 .env.*
@@ -20,4 +21,6 @@ build/
 demo-recording/
 pdf_preview/
 backend/data/
-backend/app/data/
+backend/app/data/*
+!backend/app/data/*.example.json
+Codebud/

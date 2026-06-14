@@ -1,4 +1,4 @@
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
 from app.schemas.campusflow import (
     AttendanceEvent,
@@ -10,6 +10,16 @@ from app.schemas.campusflow import (
     ExamReminder,
     ExamScheduleUpload,
     ExamScheduleUploadResponse,
+    ProcessCaseCreateRequest,
+    ProcessCaseReplyRequest,
+    ProcessCaseResponse,
+    ProcessCaseSendRequest,
+    ProcessCopilotAskRequest,
+    ProcessCopilotAskResponse,
+    ProcessInboundReplyRequest,
+    ProcessPolicyListResponse,
+    ProcessPolicyUploadResponse,
+    ProcessTaskUpdateRequest,
     TimetableResponse,
     TimetableTodayResponse,
     TimetableUploadResponse,
@@ -19,6 +29,7 @@ from app.services.attendance_repository import AttendanceRepository
 from app.services.campusflow_service import CampusFlowService
 from app.services.exam_repository import ExamRepository
 from app.services.exam_schedule_service import ExamScheduleService
+from app.services.process_copilot_service import ProcessCopilotService
 from app.services.timetable_repository import TimetableRepository
 from app.services.timetable_service import TimetableService
 
@@ -35,6 +46,7 @@ campusflow_service = CampusFlowService(
     timetable_service,
 )
 exam_schedule_service = ExamScheduleService(exam_repository)
+process_copilot_service = ProcessCopilotService()
 
 
 @router.get("/overview", response_model=CampusFlowOverview)
@@ -73,6 +85,127 @@ async def upload_timetable_pdf(file: UploadFile = File(...)) -> TimetableUploadR
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Could not process PDF: {exc}") from exc
+
+
+@router.post("/process-copilot/upload-policy", response_model=ProcessPolicyUploadResponse)
+async def upload_process_policy_pdf(
+    file: UploadFile = File(...),
+    college_id: str = Form("default"),
+) -> ProcessPolicyUploadResponse:
+    if file.content_type not in {"application/pdf", "application/octet-stream"}:
+        raise HTTPException(status_code=400, detail="Upload a PDF file.")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded PDF is empty.")
+
+    try:
+        return process_copilot_service.upload_policy_pdf(
+            filename=file.filename or "campus_policy.pdf",
+            content=content,
+            college_id=college_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not process PDF: {exc}") from exc
+
+
+@router.get("/process-copilot/policies", response_model=ProcessPolicyListResponse)
+async def get_process_policies(
+    college_id: str | None = Query(None),
+) -> ProcessPolicyListResponse:
+    return process_copilot_service.list_policies(college_id)
+
+
+@router.post("/process-copilot/ask", response_model=ProcessCopilotAskResponse)
+async def ask_process_copilot(
+    payload: ProcessCopilotAskRequest,
+) -> ProcessCopilotAskResponse:
+    return await process_copilot_service.answer_question(
+        question=payload.question,
+        college_id=payload.college_id,
+    )
+
+
+@router.post("/process-copilot/cases", response_model=ProcessCaseResponse)
+async def create_process_case(
+    payload: ProcessCaseCreateRequest,
+) -> ProcessCaseResponse:
+    return await process_copilot_service.create_case(payload)
+
+
+@router.get("/process-copilot/cases", response_model=list[ProcessCaseResponse])
+async def list_process_cases(
+    college_id: str | None = Query(None),
+) -> list[ProcessCaseResponse]:
+    return process_copilot_service.list_cases(college_id)
+
+
+@router.get("/process-copilot/cases/{case_id}", response_model=ProcessCaseResponse)
+async def get_process_case(case_id: str) -> ProcessCaseResponse:
+    case = process_copilot_service.get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Process case not found.")
+    return case
+
+
+@router.post("/process-copilot/cases/{case_id}/send", response_model=ProcessCaseResponse)
+async def send_process_case(
+    case_id: str,
+    payload: ProcessCaseSendRequest | None = None,
+) -> ProcessCaseResponse:
+    case = process_copilot_service.send_case(case_id, payload)
+    if not case:
+        raise HTTPException(status_code=404, detail="Process case not found.")
+    return case
+
+
+@router.post("/process-copilot/cases/{case_id}/reply", response_model=ProcessCaseResponse)
+async def reply_process_case(
+    case_id: str,
+    payload: ProcessCaseReplyRequest,
+) -> ProcessCaseResponse:
+    case = await process_copilot_service.add_case_reply(case_id, payload)
+    if not case:
+        raise HTTPException(status_code=404, detail="Process case not found.")
+    return case
+
+
+@router.post("/process-copilot/inbound-reply", response_model=ProcessCaseResponse)
+async def inbound_process_reply(
+    payload: ProcessInboundReplyRequest,
+) -> ProcessCaseResponse:
+    case = await process_copilot_service.receive_inbound_reply(payload)
+    if not case:
+        raise HTTPException(status_code=404, detail="Matching process case not found.")
+    return case
+
+
+@router.post(
+    "/process-copilot/cases/{case_id}/follow-up",
+    response_model=ProcessCaseResponse,
+)
+async def follow_up_process_case(case_id: str) -> ProcessCaseResponse:
+    case = await process_copilot_service.follow_up_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Process case not found.")
+    return case
+
+
+@router.patch(
+    "/process-copilot/cases/{case_id}/tasks/{task_id}",
+    response_model=ProcessCaseResponse,
+)
+async def update_process_case_task(
+    case_id: str,
+    task_id: str,
+    payload: ProcessTaskUpdateRequest,
+) -> ProcessCaseResponse:
+    case = process_copilot_service.update_case_task(case_id, task_id, payload)
+    if not case:
+        raise HTTPException(status_code=404, detail="Process case or task not found.")
+    return case
 
 
 @router.get("/exams", response_model=list[ExamReminder])
@@ -119,4 +252,4 @@ async def submit_attendance_feedback(
 
 @router.post("/ask", response_model=CampusQuestionResponse)
 async def ask_campus_question(payload: CampusQuestionRequest) -> CampusQuestionResponse:
-    return campusflow_service.answer_question(payload)
+    return await campusflow_service.answer_question(payload)

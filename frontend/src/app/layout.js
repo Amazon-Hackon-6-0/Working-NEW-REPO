@@ -1,4 +1,5 @@
 import "./globals.css";
+import "../features/campusbuddy/campusBuddy.css";
 
 export const metadata = {
   title: "CampusFlow",

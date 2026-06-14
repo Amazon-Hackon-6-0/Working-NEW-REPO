@@ -36,6 +36,121 @@ class DiscordService:
     def interactions_configured(self) -> bool:
         return bool(settings.discord_public_key)
 
+    async def send_briefing(self) -> DiscordPromptResponse:
+        if not self.is_configured:
+            raise RuntimeError(
+                "Configure DISCORD_BOT_TOKEN + DISCORD_CHANNEL_ID or DISCORD_WEBHOOK_URL to send briefings."
+            )
+
+        overview = self.campusflow_service.get_overview()
+        timetable = self.campusflow_service.get_timetable()
+        risky_subjects = [
+            subject
+            for subject in overview.attendance
+            if subject.status in {"danger", "critical"}
+        ]
+        pending_assignments = [
+            assignment
+            for assignment in overview.assignments
+            if assignment.status in {"pending", "unknown", "late", "missed"}
+        ]
+        next_exam = overview.exams[0] if overview.exams else None
+        next_class = timetable.next_class
+        next_class_label = (
+            self._class_label_for_entry(next_class) if next_class else "No upcoming class"
+        )
+        today_classes = timetable.today
+
+        fields = [
+            {
+                "name": "Attendance risk",
+                "value": (
+                    "\n".join(
+                        f"{subject.code}: {subject.attendance_percent}% · {subject.bunk_budget} bunk(s) left"
+                        for subject in risky_subjects
+                    )
+                    or "No subject is near or below the 75% threshold."
+                ),
+            },
+            {
+                "name": "Pending work",
+                "value": (
+                    "\n".join(
+                        f"{assignment.title} · {assignment.due_at}"
+                        for assignment in pending_assignments[:5]
+                    )
+                    or "No pending assignments detected."
+                ),
+            },
+            {
+                "name": "Today's classes",
+                "value": (
+                    "\n".join(
+                        f"{entry.subject_code}: {entry.start_time}-{entry.end_time}"
+                        f"{f' · {entry.room}' if entry.room else ''}"
+                        for entry in today_classes
+                    )
+                    or "No classes scheduled today."
+                ),
+            },
+            {
+                "name": "Next exam",
+                "value": (
+                    f"{next_exam.subject} · {next_exam.exam_date} at {next_exam.time}"
+                    f"{f' · {next_exam.venue}' if next_exam.venue else ''}"
+                    if next_exam
+                    else "No upcoming exam schedule uploaded."
+                ),
+            },
+            {
+                "name": "Next class",
+                "value": next_class_label,
+            },
+        ]
+
+        suggestions = overview.briefing.suggestions or [
+            "Keep attendance above 75%, finish pending work first, and check exam reminders daily."
+        ]
+        embed = {
+            "title": "CampusFlow daily briefing",
+            "description": "\n".join(f"- {item}" for item in suggestions[:4]),
+            "color": 3447003,
+            "fields": fields,
+        }
+
+        if self.bot_configured:
+            payload = {
+                "allowed_mentions": {"parse": []},
+                "content": "**Tonight's CampusFlow briefing is ready.**",
+                "embeds": [embed],
+            }
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.post(
+                    f"https://discord.com/api/v10/channels/{settings.discord_channel_id}/messages",
+                    headers={
+                        "Authorization": f"Bot {settings.discord_bot_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+            response.raise_for_status()
+        else:
+            payload = {
+                "username": "CampusFlow",
+                "allowed_mentions": {"parse": []},
+                "content": "**Tonight's CampusFlow briefing is ready.**",
+                "embeds": [embed],
+            }
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.post(f"{settings.discord_webhook_url}?wait=true", json=payload)
+            response.raise_for_status()
+
+        return DiscordPromptResponse(
+            sent=True,
+            message="Discord briefing sent with attendance, work, classes, next exam, and next class.",
+            feedback_url=f"{settings.public_base_url}/api/v1/integrations/discord/briefing",
+        )
+
     async def send_daily_feedback_prompt(
         self,
         subject_code: str | None = None,

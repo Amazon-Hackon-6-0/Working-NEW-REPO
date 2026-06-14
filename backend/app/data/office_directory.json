@@ -1,0 +1,28 @@
+{
+  "default": {
+    "academic_office": {
+      "name": "Academic Office",
+      "email": "singhpranjay15@gmail.com"
+    },
+    "exam_cell": {
+      "name": "Exam Cell",
+      "email": "singhpranjay15@gmail.com"
+    },
+    "hostel_office": {
+      "name": "Hostel Office",
+      "email": "singhpranjay15@gmail.com"
+    },
+    "placement_office": {
+      "name": "Placement Office",
+      "email": "singhpranjay15@gmail.com"
+    },
+    "mess_committee": {
+      "name": "Mess Committee",
+      "email": "singhpranjay15@gmail.com"
+    },
+    "admin_security": {
+      "name": "Admin/Security Office",
+      "email": "singhpranjay15@gmail.com"
+    }
+  }
+}

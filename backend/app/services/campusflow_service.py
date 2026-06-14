@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from math import floor
 from datetime import datetime, timedelta
+from math import floor
+import re
 
+import httpx
+
+from app.core.config import settings
 from app.schemas.campusflow import (
     AssignmentItem,
     AttendanceFeedback,
@@ -219,12 +223,152 @@ class CampusFlowService:
         updated["missed_hours"] = round(missed_hours, 2)
         return updated
 
-    def answer_question(self, payload: CampusQuestionRequest) -> CampusQuestionResponse:
+    async def answer_question(self, payload: CampusQuestionRequest) -> CampusQuestionResponse:
+        local_response = self._answer_question_locally(payload)
+        if not settings.gemini_api_key:
+            return local_response
+
+        try:
+            gemini_answer = await self._ask_gemini(payload.question, local_response)
+        except Exception:
+            return local_response
+
+        if not gemini_answer:
+            return local_response
+
+        return CampusQuestionResponse(
+            answer=gemini_answer,
+            sources=[*local_response.sources, "Gemini AI"],
+            confidence=local_response.confidence,
+        )
+
+    def _answer_question_locally(self, payload: CampusQuestionRequest) -> CampusQuestionResponse:
         question = payload.question.lower()
         overview = self.get_overview()
+        timetable = self.get_timetable()
+        risky = sorted(overview.attendance, key=lambda item: item.attendance_percent)[0]
+        pending = [item for item in overview.assignments if item.status in {"pending", "unknown", "late", "missed"}]
+        next_exam = overview.exams[0] if overview.exams else None
+        next_class = timetable.next_class
+        today_classes = timetable.today
+        sources = ["Attendance tracker", "Timetable", "Exam reminders", "Assignments"]
+        requested_codes = self._requested_subject_codes(question, overview.attendance)
+
+        if ("how many" in question or "how much" in question) and any(
+            word in question for word in {"bunk", "bunks", "miss", "skip"}
+        ):
+            targets = [
+                subject for subject in overview.attendance if not requested_codes or subject.code in requested_codes
+            ]
+            return CampusQuestionResponse(
+                answer=(
+                    "Safe bunk budget: "
+                    + "; ".join(
+                        f"{subject.code}: {subject.bunk_budget} class(es) left at {subject.attendance_percent}%"
+                        for subject in targets
+                    )
+                    + ". Cancelled or teacher-absent classes do not consume this budget."
+                ),
+                sources=["Smart bunk planner", "Attendance tracker"],
+                confidence="high",
+            )
+
+        bunk_plan = self._bunk_plan_for_question(question, overview.attendance)
+
+        if bunk_plan:
+            risky_after = [
+                item for item in bunk_plan["subjects"] if item["projected_percent"] - self.threshold <= 10
+            ]
+            subject_lines = "; ".join(
+                f"{item['code']}: miss {item['missed_classes']} class(es), "
+                f"{item['projected_percent']}%, {item['projected_bunks']} bunk(s) left"
+                for item in bunk_plan["subjects"]
+            )
+            if risky_after:
+                return CampusQuestionResponse(
+                    answer=(
+                        f"Do not take this leave. Simulating {bunk_plan['label']} gives: "
+                        f"{subject_lines}. Since "
+                        + ", ".join(item["code"] for item in risky_after)
+                        + " would be within 10% of the 75% threshold, it is safer to attend or take a shorter leave."
+                    ),
+                    sources=["Smart bunk planner", "Timetable", "Attendance tracker"],
+                    confidence="high",
+                )
+            return CampusQuestionResponse(
+                answer=(
+                    f"This leave looks possible from attendance only. Simulating {bunk_plan['label']} gives: "
+                    f"{subject_lines}. Keep exam dates and pending assignments in mind before finalizing."
+                ),
+                sources=["Smart bunk planner", "Timetable", "Attendance tracker"],
+                confidence="high",
+            )
+
+        if requested_codes and any(word in question for word in {"bunk", "skip", "leave", "holiday", "vacation", "absent", "miss"}):
+            requested_label = ", ".join(sorted(requested_codes))
+            return CampusQuestionResponse(
+                answer=(
+                    f"There is no {requested_label} class tomorrow in the uploaded timetable, "
+                    "so skipping tomorrow has no attendance impact for that subject."
+                ),
+                sources=["Smart bunk planner", "Timetable"],
+                confidence="high",
+            )
+
+        if any(word in question for word in {"event", "fest", "workshop", "seminar", "participate", "competition"}):
+            blockers = []
+            positives = []
+            if risky.bunk_budget <= 1:
+                blockers.append(
+                    f"{risky.code} has only {risky.bunk_budget} safe bunk(s) left at {risky.attendance_percent}%."
+                )
+            else:
+                positives.append(
+                    f"attendance is comfortable enough in the riskiest subject ({risky.code}: {risky.bunk_budget} bunks left)"
+                )
+
+            if pending:
+                blockers.append(
+                    f"{len(pending)} pending assignment(s) need attention, including {pending[0].title}."
+                )
+            else:
+                positives.append("no pending assignments are currently detected")
+
+            if next_exam:
+                blockers.append(
+                    f"the next exam is {next_exam.subject} on {next_exam.exam_date} at {next_exam.time}."
+                )
+            else:
+                positives.append("no upcoming exam schedule is uploaded")
+
+            if today_classes:
+                positives.append(
+                    "today's classes are "
+                    + ", ".join(f"{entry.subject_code} {entry.start_time}-{entry.end_time}" for entry in today_classes)
+                )
+
+            if blockers:
+                return CampusQuestionResponse(
+                    answer=(
+                        "You can participate only if the event does not clash with classes and you first handle the risky items: "
+                        + " ".join(blockers)
+                        + " If the event is optional, prefer attending class or finishing pending work before committing."
+                    ),
+                    sources=sources,
+                    confidence="high",
+                )
+
+            return CampusQuestionResponse(
+                answer=(
+                    "Yes, participation looks reasonable from the current academic context: "
+                    + "; ".join(positives)
+                    + ". Still check the event timing against your timetable before you commit."
+                ),
+                sources=sources,
+                confidence="medium",
+            )
 
         if "attendance" in question or "bunk" in question:
-            risky = sorted(overview.attendance, key=lambda item: item.attendance_percent)[0]
             return CampusQuestionResponse(
                 answer=(
                     f"{risky.code} needs attention at {risky.attendance_percent}%. "
@@ -235,7 +379,7 @@ class CampusFlowService:
                 confidence="high",
             )
 
-        if "exam" in question:
+        if "exam" in question or "test" in question:
             if not overview.exams:
                 return CampusQuestionResponse(
                     answer="No upcoming exam schedule is uploaded yet. Upload the latest exam PDF to activate exam reminders.",
@@ -243,6 +387,19 @@ class CampusFlowService:
                     confidence="high",
                 )
             next_exam = overview.exams[0]
+            if any(word in question for word in {"study", "prepare", "tips", "topic", "topics", "important", "revise", "revision"}):
+                subject_code = self._requested_subject_codes(question, overview.attendance)
+                subject_label = next(iter(subject_code), None) or self._subject_code_for_name(next_exam.subject, overview.attendance) or next_exam.subject
+                topics = self._study_topics_for_subject(subject_label)
+                return CampusQuestionResponse(
+                    answer=(
+                        f"For {subject_label}, prioritize: {', '.join(topics)}. "
+                        f"Your next exam is {next_exam.subject} on {next_exam.exam_date} at {next_exam.time}. "
+                        "Revise definitions first, then solve 2-3 previous-year style problems."
+                    ),
+                    sources=["Exam reminders", "Study topic knowledge base"],
+                    confidence="medium",
+                )
             return CampusQuestionResponse(
                 answer=(
                     f"Your next verified exam is {next_exam.subject} on {next_exam.exam_date} "
@@ -252,15 +409,295 @@ class CampusFlowService:
                 confidence=next_exam.confidence,
             )
 
-        pending = [item for item in overview.assignments if item.status in {"pending", "unknown"}]
+        if "class" in question or "timetable" in question or "schedule" in question:
+            if not next_class:
+                return CampusQuestionResponse(
+                    answer="No upcoming class is currently available in the timetable.",
+                    sources=["Timetable"],
+                    confidence="high",
+                )
+            room = f" in {next_class.room}" if next_class.room else ""
+            return CampusQuestionResponse(
+                answer=(
+                    f"Your next class is {next_class.subject_code} "
+                    f"({next_class.subject_name}) on {next_class.weekday} from "
+                    f"{next_class.start_time} to {next_class.end_time}{room}."
+                ),
+                sources=["Timetable"],
+                confidence="high",
+            )
+
+        if "assignment" in question or "pending" in question or "work" in question:
+            if not pending:
+                return CampusQuestionResponse(
+                    answer="No pending assignments are detected right now.",
+                    sources=["Google Classroom", "Assignment tracker"],
+                    confidence="high",
+                )
+            return CampusQuestionResponse(
+                answer=(
+                    f"You have {len(pending)} pending assignment(s). Start with {pending[0].title} "
+                    f"for {pending[0].course}, due {pending[0].due_at}."
+                ),
+                sources=["Google Classroom", "Assignment tracker"],
+                confidence="high",
+            )
+
         return CampusQuestionResponse(
             answer=(
-                "Today you should finish pending assignments and attend the next scheduled class "
-                "that is closest to the 75% attendance threshold."
+                f"Current snapshot: {risky.code} is the tightest attendance subject at "
+                f"{risky.attendance_percent}% with {risky.bunk_budget} bunk(s) left; "
+                f"{len(pending)} assignment(s) need attention; "
+                f"next exam is {next_exam.subject if next_exam else 'not uploaded'}; "
+                f"next class is {next_class.subject_code if next_class else 'not available'}."
             ),
-            sources=["Google Classroom", "Attendance tracker", "Manual assignment entry"],
+            sources=sources,
             confidence="medium" if pending else "high",
         )
+
+    async def _ask_gemini(
+        self,
+        question: str,
+        local_response: CampusQuestionResponse,
+    ) -> str | None:
+        overview = self.get_overview()
+        timetable = self.get_timetable()
+        context = {
+            "attendance": [
+                {
+                    "code": item.code,
+                    "percent": item.attendance_percent,
+                    "bunks_left": item.bunk_budget,
+                    "held_classes": item.held_classes,
+                    "planned_classes": item.planned_classes,
+                    "next_class": item.next_class,
+                }
+                for item in overview.attendance
+            ],
+            "pending_assignments": [
+                {
+                    "title": item.title,
+                    "course": item.course,
+                    "due_at": item.due_at,
+                    "status": item.status,
+                }
+                for item in overview.assignments
+                if item.status in {"pending", "unknown", "late", "missed"}
+            ],
+            "next_exam": overview.exams[0].model_dump() if overview.exams else None,
+            "today_classes": [item.model_dump() for item in timetable.today],
+            "next_class": timetable.next_class.model_dump() if timetable.next_class else None,
+            "smart_bunk_plan": self._bunk_plan_for_question(question, overview.attendance),
+            "study_topic_hint": self._study_hint_for_question(question, overview),
+            "local_recommendation": local_response.answer,
+        }
+        use_google_search = self._needs_web_study_context(question)
+        prompt = (
+            "You are CampusFlow, a concise student academic assistant. "
+            "Answer using only the provided JSON context. Do not invent dates, classes, exams, or assignments. "
+            "If the student asks whether they can attend an event, decide based on attendance risk, pending work, "
+            "upcoming exams, and class schedule. If smart_bunk_plan is present, use its projected_percent and "
+            "projected_bunks exactly, and advise against leave when any projected_percent is within 10 points "
+            "of the 75% threshold. For study-tip questions, combine the student's exam context with web-backed "
+            "standard syllabus topics and list specific topics to revise. Keep the answer under 120 words and make it actionable.\n\n"
+            f"Question: {question}\n\nContext JSON:\n{context}"
+        )
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{settings.gemini_model}:generateContent"
+        )
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}],
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": 220,
+            },
+        }
+        if use_google_search:
+            payload["tools"] = [{"google_search": {}}]
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                url,
+                params={"key": settings.gemini_api_key},
+                json=payload,
+            )
+        response.raise_for_status()
+        data = response.json()
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = "".join(part.get("text", "") for part in parts).strip()
+        return text or None
+
+    def _needs_web_study_context(self, question: str) -> bool:
+        return any(
+            word in question
+            for word in {"study", "prepare", "tips", "topic", "topics", "important", "revise", "revision", "syllabus"}
+        )
+
+    def _study_hint_for_question(
+        self,
+        question: str,
+        overview: CampusFlowOverview,
+    ) -> dict | None:
+        if not self._needs_web_study_context(question):
+            return None
+        requested_codes = self._requested_subject_codes(question, overview.attendance)
+        next_exam = overview.exams[0] if overview.exams else None
+        subject_code = next(iter(requested_codes), None)
+        if not subject_code and next_exam:
+            subject_code = self._subject_code_for_name(next_exam.subject, overview.attendance)
+        if not subject_code:
+            return None
+        return {
+            "subject_code": subject_code,
+            "suggested_topics": self._study_topics_for_subject(subject_code),
+            "next_exam": next_exam.model_dump() if next_exam else None,
+        }
+
+    def _subject_code_for_name(
+        self,
+        subject_name: str,
+        attendance: list[SubjectAttendance],
+    ) -> str | None:
+        normalized = subject_name.lower()
+        for subject in attendance:
+            if subject.code.lower() in normalized or subject.name.lower() in normalized:
+                return subject.code
+        return None
+
+    def _study_topics_for_subject(self, subject_code: str) -> list[str]:
+        topics_by_subject = {
+            "DBMS": [
+                "ER model and relational model",
+                "SQL queries and joins",
+                "functional dependencies",
+                "1NF, 2NF, 3NF, and BCNF normalization",
+                "transactions and ACID",
+                "indexing and query optimization basics",
+            ],
+            "OS": [
+                "process scheduling",
+                "deadlocks",
+                "memory management",
+                "paging and segmentation",
+                "file systems",
+                "synchronization primitives",
+            ],
+            "CN": [
+                "OSI and TCP/IP models",
+                "subnetting",
+                "routing",
+                "TCP vs UDP",
+                "congestion control",
+                "DNS and HTTP basics",
+            ],
+            "AI": [
+                "search algorithms",
+                "heuristics",
+                "knowledge representation",
+                "probability basics",
+                "machine learning fundamentals",
+                "evaluation metrics",
+            ],
+        }
+        return topics_by_subject.get(subject_code.upper(), ["core definitions", "important derivations", "previous-year questions"])
+
+    def _bunk_plan_for_question(
+        self,
+        question: str,
+        attendance: list[SubjectAttendance],
+    ) -> dict | None:
+        wants_leave = any(
+            word in question
+            for word in {"bunk", "skip", "leave", "holiday", "vacation", "absent"}
+        )
+        if not wants_leave:
+            return None
+
+        days = 1
+        label = "tomorrow"
+        if "week" in question:
+            week_match = re.search(r"(\d+)\s*week", question)
+            weeks = int(week_match.group(1)) if week_match else 1
+            days = max(1, weeks * 7)
+            label = f"{weeks} week leave"
+        elif "tomorrow" not in question:
+            day_match = re.search(r"(\d+)\s*day", question)
+            if day_match:
+                days = max(1, int(day_match.group(1)))
+                label = f"{days} day leave"
+
+        requested_codes = {
+            code for code in self._requested_subject_codes(question, attendance)
+        }
+        attendance_by_code = {subject.code.upper(): subject for subject in attendance}
+        now = datetime.now(self.timetable_service.timezone)
+        start_date = now.date() + timedelta(days=1)
+        entries_by_code: dict[str, list[TimetableEntry]] = {}
+
+        for offset in range(days):
+            class_date = start_date + timedelta(days=offset)
+            for entry in self.timetable_service.classes_for_date(class_date):
+                code = entry.subject_code.upper()
+                if requested_codes and code not in requested_codes:
+                    continue
+                entries_by_code.setdefault(code, []).append(entry)
+
+        if not entries_by_code:
+            return None
+
+        subjects = []
+        for code, entries in sorted(entries_by_code.items()):
+            subject = attendance_by_code.get(code)
+            if not subject:
+                continue
+            extra_missed_hours = sum(self._class_hours(entry) for entry in entries)
+            projected_missed_hours = subject.missed_hours + extra_missed_hours
+            attended_planned_hours = max(0.0, subject.planned_hours - projected_missed_hours)
+            projected_percent = round((attended_planned_hours / subject.planned_hours) * 100, 1)
+            projected_bunks = self._bunk_budget_from_hours(
+                projected_missed_hours,
+                subject.planned_hours,
+                subject.class_hours,
+            )
+            subjects.append(
+                {
+                    "code": code,
+                    "missed_classes": len(entries),
+                    "missed_hours": round(extra_missed_hours, 2),
+                    "current_percent": subject.attendance_percent,
+                    "projected_percent": projected_percent,
+                    "current_bunks": subject.bunk_budget,
+                    "projected_bunks": projected_bunks,
+                    "within_10_percent_of_threshold": projected_percent - self.threshold <= 10,
+                }
+            )
+
+        if not subjects:
+            return None
+
+        return {
+            "label": label,
+            "days": days,
+            "threshold": self.threshold,
+            "rule": "Advise not to take holiday when projected_percent - 75 <= 10 for any subject.",
+            "subjects": subjects,
+        }
+
+    def _requested_subject_codes(
+        self,
+        question: str,
+        attendance: list[SubjectAttendance],
+    ) -> set[str]:
+        return {
+            subject.code
+            for subject in attendance
+            if re.search(rf"\b{re.escape(subject.code.lower())}\b", question)
+        }
 
     def _attendance_subjects(self) -> list[dict[str, int | float | str]]:
         entries = self.timetable_service.list_effective_entries()

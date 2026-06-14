@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
@@ -75,12 +75,6 @@ const assignments = [
 ];
 
 const exams = [];
-
-const updates = [
-  "Placement prep session moved to 4:30 PM in Seminar Hall 2.",
-  "Central library will stay open until midnight this week.",
-  "Hostel dinner menu changed to chole rice and curd.",
-];
 
 function mapOverviewSubject(subject) {
   const percent = Number.isFinite(Number(subject.attendance_percent))
@@ -175,6 +169,45 @@ function formatNextTimetableClass(entry, startsAt) {
   return `${entry.subject_code} · ${dateLabel} · ${entry.start_time}-${entry.end_time}${room}`;
 }
 
+function formatExamMetric(exam) {
+  if (!exam) return "Upload exam schedule PDF";
+  const date = new Date(`${exam.date}T00:00:00`);
+  const dateLabel = Number.isNaN(date.getTime())
+    ? exam.date
+    : date.toLocaleDateString("en-IN", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+  const venue = exam.venue ? ` · ${exam.venue}` : "";
+  return `${dateLabel} · ${exam.time}${venue}`;
+}
+
+function compactSubjectCode(subjectName, attendance = []) {
+  if (!subjectName) return "None";
+  const normalized = subjectName.toLowerCase();
+  const liveMatch = attendance.find((subject) => {
+    const subjectLabel = subject.name?.toLowerCase();
+    return subjectLabel && (subjectLabel === normalized || normalized.includes(subjectLabel));
+  });
+  if (liveMatch?.code) return liveMatch.code;
+
+  const fallbackMatch = subjects.find(
+    (subject) =>
+      subject.name.toLowerCase() === normalized ||
+      normalized.includes(subject.name.toLowerCase())
+  );
+  if (fallbackMatch?.code) return fallbackMatch.code;
+
+  return subjectName
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word[0])
+    .join("")
+    .slice(0, 6)
+    .toUpperCase();
+}
+
 export default function Home() {
   const threshold = 75;
   const [integrationStatus, setIntegrationStatus] = useState(null);
@@ -195,6 +228,39 @@ export default function Home() {
   );
   const [timetableUploadStatus, setTimetableUploadStatus] = useState("idle");
   const [isTimetableUploading, setIsTimetableUploading] = useState(false);
+  const [briefingMessage, setBriefingMessage] = useState(
+    "Ready to send attendance, work, classes, next exam, and next class to Discord.",
+  );
+  const [isBriefingSending, setIsBriefingSending] = useState(false);
+  const [processCollegeId, setProcessCollegeId] = useState("default");
+  const [policyPdfFile, setPolicyPdfFile] = useState(null);
+  const [policyUploadMessage, setPolicyUploadMessage] = useState(
+    "Upload a campus policy PDF before asking process questions.",
+  );
+  const [policyUploadStatus, setPolicyUploadStatus] = useState("idle");
+  const [isPolicyUploading, setIsPolicyUploading] = useState(false);
+  const [relayStudentName, setRelayStudentName] = useState("");
+  const [relayStudentEmail, setRelayStudentEmail] = useState("");
+  const [relaySubject, setRelaySubject] = useState("");
+  const [relayAttachedDocs, setRelayAttachedDocs] = useState("");
+  const [relayIssue, setRelayIssue] = useState(
+    "I missed my DBMS exam because I was sick.",
+  );
+  const [relayCase, setRelayCase] = useState(null);
+  const [relayCases, setRelayCases] = useState([]);
+  const [relayMessage, setRelayMessage] = useState("");
+  const [relayStatus, setRelayStatus] = useState("idle");
+  const [isCreatingCase, setIsCreatingCase] = useState(false);
+  const [isSendingCase, setIsSendingCase] = useState(false);
+  const [replyMessage, setReplyMessage] = useState("");
+  const [isAddingReply, setIsAddingReply] = useState(false);
+  const [isSendingFollowUp, setIsSendingFollowUp] = useState(false);
+  const [updatingTaskId, setUpdatingTaskId] = useState(null);
+  const [campusQuestion, setCampusQuestion] = useState(
+    "Can I participate in a college event tomorrow?",
+  );
+  const [campusAnswer, setCampusAnswer] = useState(null);
+  const [isAskingCampusFlow, setIsAskingCampusFlow] = useState(false);
 
   const attendance = useMemo(
     () => {
@@ -251,6 +317,38 @@ export default function Home() {
     timetable?.next_class,
     timetable?.next_class_starts_at,
   );
+  const nextExam = liveExams[0];
+  const nextExamCode = compactSubjectCode(nextExam?.subject, attendance);
+  const nextExamLabel = formatExamMetric(nextExam);
+  const briefing = overview?.briefing;
+  const briefingItems = briefing
+    ? [
+        ...briefing.alerts,
+        ...briefing.schedule,
+        ...briefing.suggestions,
+      ].slice(0, 6)
+    : [
+        "Attendance, assignments, classes, and exam reminders will appear after live data loads.",
+      ];
+
+  const loadProcessCases = useCallback(async () => {
+    const query = new URLSearchParams({
+      college_id: processCollegeId || "default",
+    });
+    try {
+      const response = await fetch(
+        `${API_BASE}/campusflow/process-copilot/cases?${query.toString()}`,
+      );
+      if (!response.ok) {
+        setRelayCases([]);
+        return;
+      }
+      const data = await response.json();
+      setRelayCases(Array.isArray(data) ? data : []);
+    } catch {
+      setRelayCases([]);
+    }
+  }, [processCollegeId]);
 
   async function refreshCampusFlowData() {
     await fetch(`${API_BASE}/campusflow/overview`)
@@ -283,6 +381,21 @@ export default function Home() {
         setIntegrationMessage("Backend integration status is not reachable yet.");
       });
   }, []);
+
+  useEffect(() => {
+    const query = new URLSearchParams({
+      college_id: processCollegeId || "default",
+    });
+    fetch(`${API_BASE}/campusflow/process-copilot/cases?${query.toString()}`)
+      .then((response) => {
+        if (!response.ok) return [];
+        return response.json();
+      })
+      .then((data) => {
+        setRelayCases(Array.isArray(data) ? data : []);
+      })
+      .catch(() => setRelayCases([]));
+  }, [processCollegeId]);
 
   async function openGoogleClassroomAuth() {
     const response = await fetch(`${API_BASE}/integrations/google/auth-url`);
@@ -322,6 +435,64 @@ export default function Home() {
       `${data.sent} daily Discord message sent for ${data.attempted} class${data.attempted === 1 ? "" : "es"}. ${data.messages.join(" ")}`,
     );
     refreshCampusFlowData();
+  }
+
+  async function sendBriefing() {
+    setIsBriefingSending(true);
+    setBriefingMessage("Sending briefing to Discord...");
+    try {
+      const response = await fetch(`${API_BASE}/integrations/discord/briefing`, {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setBriefingMessage(data.detail || "Discord briefing failed.");
+        return;
+      }
+      setBriefingMessage(data.message);
+    } catch {
+      setBriefingMessage("Could not reach the backend while sending the briefing.");
+    } finally {
+      setIsBriefingSending(false);
+    }
+  }
+
+  async function askCampusFlow() {
+    if (!campusQuestion.trim()) {
+      setCampusAnswer({
+        answer: "Ask a question first.",
+        sources: [],
+        confidence: "low",
+      });
+      return;
+    }
+
+    setIsAskingCampusFlow(true);
+    try {
+      const response = await fetch(`${API_BASE}/campusflow/ask`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: campusQuestion }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setCampusAnswer({
+          answer: data.detail || "CampusFlow could not answer that question.",
+          sources: [],
+          confidence: "low",
+        });
+        return;
+      }
+      setCampusAnswer(data);
+    } catch {
+      setCampusAnswer({
+        answer: "Could not reach the backend while asking CampusFlow.",
+        sources: [],
+        confidence: "low",
+      });
+    } finally {
+      setIsAskingCampusFlow(false);
+    }
   }
 
   async function uploadExamPdf() {
@@ -394,6 +565,226 @@ export default function Home() {
     }
   }
 
+  async function uploadPolicyPdf() {
+    if (!policyPdfFile) {
+      setPolicyUploadStatus("error");
+      setPolicyUploadMessage("Choose a campus policy PDF first.");
+      return;
+    }
+
+    setIsPolicyUploading(true);
+    setPolicyUploadStatus("loading");
+    setPolicyUploadMessage("Extracting campus policy text...");
+    const formData = new FormData();
+    formData.append("file", policyPdfFile);
+    formData.append("college_id", processCollegeId || "default");
+
+    try {
+      const response = await fetch(`${API_BASE}/campusflow/process-copilot/upload-policy`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setPolicyUploadStatus("error");
+        setPolicyUploadMessage(data.detail || "Campus policy upload failed.");
+        return;
+      }
+      setPolicyUploadStatus("success");
+      setPolicyUploadMessage(data.message);
+    } catch {
+      setPolicyUploadStatus("error");
+      setPolicyUploadMessage("Could not reach the backend while uploading the policy PDF.");
+    } finally {
+      setIsPolicyUploading(false);
+    }
+  }
+
+  function attachedDocumentNames() {
+    return relayAttachedDocs
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  async function createRelayCase() {
+    if (!relayIssue.trim()) {
+      setRelayStatus("error");
+      setRelayMessage("Enter the student issue before creating a case.");
+      return;
+    }
+
+    setIsCreatingCase(true);
+    setRelayStatus("loading");
+    setRelayMessage("Creating campus request draft...");
+    try {
+      const response = await fetch(`${API_BASE}/campusflow/process-copilot/cases`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          college_id: processCollegeId || "default",
+          student_name: relayStudentName || null,
+          student_email: relayStudentEmail || null,
+          student_issue: relayIssue,
+          course_or_subject: relaySubject || null,
+          attached_document_names: attachedDocumentNames(),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setRelayStatus("error");
+        setRelayMessage(data.detail || "Could not create process case.");
+        return;
+      }
+      setRelayCase(data);
+      setRelayStatus("success");
+      setRelayMessage(data.action_message || "Draft case created.");
+      await loadProcessCases();
+    } catch {
+      setRelayStatus("error");
+      setRelayMessage("Could not reach the backend while creating the case.");
+    } finally {
+      setIsCreatingCase(false);
+    }
+  }
+
+  async function sendRelayCase() {
+    if (!relayCase?.case_id) return;
+    setIsSendingCase(true);
+    setRelayStatus("loading");
+    setRelayMessage(
+      relayCase.delivery_mode === "email"
+        ? "Sending request to routed office..."
+        : "Queueing request locally...",
+    );
+    try {
+      const response = await fetch(
+        `${API_BASE}/campusflow/process-copilot/cases/${relayCase.case_id}/send`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ student_approved: true }),
+        },
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        setRelayStatus("error");
+        setRelayMessage(data.detail || "Could not queue request.");
+        return;
+      }
+      setRelayCase(data);
+      setRelayStatus("success");
+      setRelayMessage(data.action_message || "Request updated.");
+      await loadProcessCases();
+    } catch {
+      setRelayStatus("error");
+      setRelayMessage("Could not reach the backend while sending the request.");
+    } finally {
+      setIsSendingCase(false);
+    }
+  }
+
+  async function addRelayReply() {
+    if (!relayCase?.case_id || !replyMessage.trim()) {
+      setRelayStatus("error");
+      setRelayMessage("Open a case and enter an office reply first.");
+      return;
+    }
+
+    setIsAddingReply(true);
+    setRelayStatus("loading");
+    setRelayMessage("Adding simulated office reply...");
+    try {
+      const response = await fetch(
+        `${API_BASE}/campusflow/process-copilot/cases/${relayCase.case_id}/reply`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            reply_from: relayCase.routed_to_office,
+            reply_message: replyMessage,
+          }),
+        },
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        setRelayStatus("error");
+        setRelayMessage(data.detail || "Could not add office reply.");
+        return;
+      }
+      setRelayCase(data);
+      setReplyMessage("");
+      setRelayStatus("success");
+      setRelayMessage(data.action_message || "Office reply added.");
+      await loadProcessCases();
+    } catch {
+      setRelayStatus("error");
+      setRelayMessage("Could not reach the backend while adding the reply.");
+    } finally {
+      setIsAddingReply(false);
+    }
+  }
+
+  async function sendRelayFollowUp() {
+    if (!relayCase?.case_id) return;
+    setIsSendingFollowUp(true);
+    setRelayStatus("loading");
+    setRelayMessage("Preparing follow-up...");
+    try {
+      const response = await fetch(
+        `${API_BASE}/campusflow/process-copilot/cases/${relayCase.case_id}/follow-up`,
+        { method: "POST" },
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        setRelayStatus("error");
+        setRelayMessage(data.detail || "Could not send follow-up.");
+        return;
+      }
+      setRelayCase(data);
+      setRelayStatus("success");
+      setRelayMessage(data.action_message || "Follow-up updated.");
+      await loadProcessCases();
+    } catch {
+      setRelayStatus("error");
+      setRelayMessage("Could not reach the backend while sending follow-up.");
+    } finally {
+      setIsSendingFollowUp(false);
+    }
+  }
+
+  async function updateRelayTask(taskId, done) {
+    if (!relayCase?.case_id) return;
+    setUpdatingTaskId(taskId);
+    setRelayStatus("loading");
+    setRelayMessage("Updating checklist...");
+    try {
+      const response = await fetch(
+        `${API_BASE}/campusflow/process-copilot/cases/${relayCase.case_id}/tasks/${taskId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ done }),
+        },
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        setRelayStatus("error");
+        setRelayMessage(data.detail || "Could not update task.");
+        return;
+      }
+      setRelayCase(data);
+      setRelayStatus("success");
+      setRelayMessage(data.action_message || "Task updated.");
+      await loadProcessCases();
+    } catch {
+      setRelayStatus("error");
+      setRelayMessage("Could not reach the backend while updating the task.");
+    } finally {
+      setUpdatingTaskId(null);
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="CampusFlow navigation">
@@ -404,9 +795,13 @@ export default function Home() {
         <nav>
           <a href="#attendance">Attendance</a>
           <a href="#timetable">Timetable</a>
+          <a href="#process-copilot">Process Relay</a>
           <a href="#exams">Exams</a>
           <a href="#assignments">Assignments</a>
           <a href="#briefing">Briefing</a>
+          <button type="button" onClick={() => window.location.assign("/campusbuddy")}>
+            CampusBuddy AI
+          </button>
         </nav>
         <div className="sidebar-note">
           <span>Verified</span>
@@ -420,8 +815,13 @@ export default function Home() {
             <p className="eyebrow">Semester 5 dashboard</p>
             <h2>Tonight&apos;s briefing is ready for Discord</h2>
           </div>
-          <button type="button" className="primary-button">
-            Send briefing
+          <button
+            type="button"
+            className="primary-button"
+            onClick={sendBriefing}
+            disabled={isBriefingSending}
+          >
+            {isBriefingSending ? "Sending..." : "Send briefing"}
           </button>
         </header>
 
@@ -445,6 +845,11 @@ export default function Home() {
             <span>Next class</span>
             <strong>{timetable?.next_class?.subject_code || "None"}</strong>
             <p>{nextClassLabel}</p>
+          </div>
+          <div className="metric">
+            <span>Next exam</span>
+            <strong>{nextExamCode}</strong>
+            <p>{nextExamLabel}</p>
           </div>
         </section>
 
@@ -514,6 +919,336 @@ export default function Home() {
                 </article>
               ))
             )}
+          </div>
+        </section>
+
+        <section className="panel process-copilot-panel" id="process-copilot">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Campus helpdesk AI</p>
+              <h3>Campus Process Relay</h3>
+            </div>
+            <span className="threshold">{processCollegeId || "default"}</span>
+          </div>
+          <p className="relay-feature-note">
+            Campus Process Relay turns a student issue into a routed campus case,
+            drafts the official request, tracks office replies, and updates the
+            student&apos;s next action.
+          </p>
+          <div className="relay-workspace">
+            <div className="relay-create-card">
+              <h4>Create process case</h4>
+              <label>
+                College ID
+                <input
+                  type="text"
+                  value={processCollegeId}
+                  onChange={(event) => setProcessCollegeId(event.target.value)}
+                  placeholder="default"
+                />
+              </label>
+              <div className="file-upload-row">
+                <label>
+                  Campus policy PDF
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    onChange={(event) => setPolicyPdfFile(event.target.files?.[0] || null)}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={uploadPolicyPdf}
+                  disabled={isPolicyUploading}
+                >
+                  {isPolicyUploading ? "Uploading..." : "Upload policy PDF"}
+                </button>
+              </div>
+              <p className={`upload-message ${policyUploadStatus}`}>
+                {policyUploadMessage}
+              </p>
+              <label>
+                Describe your campus problem
+                <textarea
+                  value={relayIssue}
+                  onChange={(event) => setRelayIssue(event.target.value)}
+                  placeholder="I missed my DBMS exam because I was sick."
+                  rows={5}
+                />
+              </label>
+              <div className="relay-inline-fields">
+                <label>
+                  Student name
+                  <input
+                    type="text"
+                    value={relayStudentName}
+                    onChange={(event) => setRelayStudentName(event.target.value)}
+                    placeholder="Optional"
+                  />
+                </label>
+                <label>
+                  Student email
+                  <input
+                    type="email"
+                    value={relayStudentEmail}
+                    onChange={(event) => setRelayStudentEmail(event.target.value)}
+                    placeholder="Optional"
+                  />
+                </label>
+                <label>
+                  Subject/course
+                  <input
+                    type="text"
+                    value={relaySubject}
+                    onChange={(event) => setRelaySubject(event.target.value)}
+                    placeholder="DBMS, attendance, hostel"
+                  />
+                </label>
+              </div>
+              <label>
+                Attached document names
+                <input
+                  type="text"
+                  value={relayAttachedDocs}
+                  onChange={(event) => setRelayAttachedDocs(event.target.value)}
+                  placeholder="medical_certificate.pdf, exam_form.pdf"
+                />
+              </label>
+              <button
+                type="button"
+                className="primary-button process-ask-button"
+                onClick={createRelayCase}
+                disabled={isCreatingCase}
+              >
+                {isCreatingCase ? "Creating..." : "Create Process Case"}
+              </button>
+              {relayMessage ? (
+                <p className={`upload-message ${relayStatus}`}>{relayMessage}</p>
+              ) : null}
+            </div>
+
+            <div className="relay-case-card">
+              {relayCase ? (
+                <>
+                  <div className="relay-case-title">
+                    <div>
+                      <p className="eyebrow">{relayCase.issue_type}</p>
+                      <h4>{relayCase.summary}</h4>
+                    </div>
+                    <span className={`case-status ${statusClass(relayCase.status)}`}>
+                      {relayCase.status}
+                    </span>
+                  </div>
+                  <div className="process-mode-row">
+                    <span
+                      className={`mode-note ${
+                        relayCase.llm_used && relayCase.llm_provider === "gemini"
+                          ? "gemini"
+                          : "fallback"
+                      }`}
+                    >
+                      {relayCase.llm_used && relayCase.llm_provider === "gemini"
+                        ? "Gemini relay"
+                        : "Fallback relay"}
+                    </span>
+                    <span className="process-college">
+                      Confidence {relayCase.confidence}
+                    </span>
+                  </div>
+                  {relayCase.fallback_mode && relayCase.llm_error ? (
+                    <p className="llm-error">{relayCase.llm_error}</p>
+                  ) : null}
+
+                  <div className="process-meta">
+                    <div>
+                      <span>Routed office</span>
+                      <strong>{relayCase.routed_to_office}</strong>
+                      {relayCase.routed_to_email ? (
+                        <small>{relayCase.routed_to_email}</small>
+                      ) : null}
+                    </div>
+                    <div>
+                      <span>Delivery mode</span>
+                      <strong>
+                        {relayCase.delivery_mode === "email" ? "Email enabled" : "Queue mode"}
+                      </strong>
+                      <small>
+                        {relayCase.delivery_mode === "email"
+                          ? `Email enabled: this request will be sent to ${relayCase.routed_to_email || "the routed office email"}.`
+                          : "Email disabled: request will be queued locally. In production, SMTP sends this to the routed office."}
+                      </small>
+                    </div>
+                    <div>
+                      <span>Deadline/timeline</span>
+                      <strong>{relayCase.deadline_or_timeline || "Not found in policy"}</strong>
+                    </div>
+                  </div>
+
+                  {relayCase.required_documents?.length ? (
+                    <div className="process-block">
+                      <span>Required documents</span>
+                      <div className="document-chip-list">
+                        {relayCase.required_documents.map((document, index) => (
+                          <span className="document-chip" key={`relay-doc-${index}`}>
+                            {document}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="process-block">
+                    <span>Request sent to office</span>
+                    <p className="relay-note">
+                      This is the message sent to the routed office, not to the student.
+                    </p>
+                    <strong>{relayCase.generated_message_subject}</strong>
+                    <pre>{relayCase.generated_message_body}</pre>
+                  </div>
+
+                  {relayCase.student_next_action ? (
+                    <div className="process-block">
+                      <span>Student next action</span>
+                      <p className="relay-next-action">{relayCase.student_next_action}</p>
+                    </div>
+                  ) : null}
+
+                  {relayCase.tasks?.length ? (
+                    <div className="process-block">
+                      <span>Checklist</span>
+                      <div className="relay-task-list">
+                        {relayCase.tasks.map((task, index) => (
+                          <label key={`relay-task-${index}`}>
+                            <input
+                              type="checkbox"
+                              checked={Boolean(task.done)}
+                              disabled={updatingTaskId === task.task_id}
+                              onChange={(event) =>
+                                updateRelayTask(task.task_id, event.target.checked)
+                              }
+                            />
+                            {task.title}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {relayCase.timeline?.length ? (
+                    <div className="process-block">
+                      <span>Case timeline</span>
+                      <div className="relay-timeline">
+                        {relayCase.timeline.map((event, index) => (
+                          <div className="relay-timeline-item" key={`relay-event-${index}`}>
+                            <strong>{event.title}</strong>
+                            {event.message ? <small>{event.message}</small> : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="relay-action-row">
+                    <button
+                      type="button"
+                      className="primary-button process-ask-button"
+                      onClick={sendRelayCase}
+                      disabled={isSendingCase || relayCase.status !== "draft"}
+                    >
+                      {isSendingCase
+                        ? relayCase.delivery_mode === "email"
+                          ? "Sending..."
+                          : "Queueing..."
+                        : relayCase.delivery_mode === "email"
+                          ? "Send Request to Office"
+                          : "Queue Request"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={sendRelayFollowUp}
+                      disabled={isSendingFollowUp}
+                    >
+                      {isSendingFollowUp ? "Sending..." : "Send Follow-up"}
+                    </button>
+                  </div>
+                  {relayCase.last_student_notification ? (
+                    <p className="relay-next-action">{relayCase.last_student_notification}</p>
+                  ) : null}
+
+                  <div className="process-block">
+                    <span>Simulate / Add Office Reply</span>
+                    <p className="relay-note">
+                      Production replies can be matched from email by case ID; use this box
+                      to simulate an office reply during testing.
+                    </p>
+                    <textarea
+                      value={replyMessage}
+                      onChange={(event) => setReplyMessage(event.target.value)}
+                      placeholder="Paste office reply"
+                      rows={3}
+                    />
+                    <button
+                      type="button"
+                      onClick={addRelayReply}
+                      disabled={isAddingReply}
+                    >
+                      {isAddingReply ? "Adding..." : "Add Office Reply"}
+                    </button>
+                    {relayCase.office_reply ? (
+                      <p className="answer">{relayCase.office_reply}</p>
+                    ) : null}
+                    {relayCase.reply_outcome ? (
+                      <small>Outcome: {relayCase.reply_outcome}</small>
+                    ) : null}
+                  </div>
+
+                  {relayCase.sources_used?.length ? (
+                    <details className="process-block source-details">
+                      <summary>Sources used</summary>
+                      <ul>
+                        {relayCase.sources_used.map((source, index) => (
+                          <li key={`relay-source-${index}`}>{source}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : null}
+                </>
+              ) : (
+                <p className="empty-state">
+                  Create a case to draft, queue, and track a campus request.
+                </p>
+              )}
+            </div>
+
+            <div className="relay-case-list">
+              <div className="relay-case-list-header">
+                <h4>My cases</h4>
+                <button type="button" onClick={loadProcessCases}>
+                  Refresh
+                </button>
+              </div>
+              {relayCases.length ? (
+                relayCases.map((item, index) => (
+                  <button
+                    type="button"
+                    className="case-list-item"
+                    key={`policy-case-${index}`}
+                    onClick={() => {
+                      setRelayCase(item);
+                      setReplyMessage("");
+                      setRelayStatus("success");
+                      setRelayMessage("Case opened.");
+                    }}
+                  >
+                    <span>{item.issue_type}</span>
+                    <strong>{item.routed_to_office}</strong>
+                    <small>{item.status}</small>
+                  </button>
+                ))
+              ) : (
+                <p className="empty-state">No process cases yet.</p>
+              )}
+            </div>
           </div>
         </section>
 
@@ -667,9 +1402,10 @@ export default function Home() {
               </div>
             </div>
             <div className="briefing">
-              <p>Attend DBMS next. It is closest to the 75% threshold.</p>
-              <p>Finish the OS case study before dinner to avoid a late-night rush.</p>
-              <p>Confirm the CN exam schedule because the source is not verified.</p>
+              <p className="live-note">{briefingMessage}</p>
+              {briefingItems.map((item) => (
+                <p key={item}>{item}</p>
+              ))}
             </div>
           </section>
         </section>
@@ -697,38 +1433,48 @@ export default function Home() {
           <p className="upload-message">{examUploadMessage}</p>
         </section>
 
-        <section className="bottom-grid">
-          <section className="panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Campus updates</p>
-                <h3>Important summaries</h3>
-              </div>
+        <section className="panel ask-panel">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Grounded AI answer</p>
+              <h3>Ask CampusFlow</h3>
             </div>
-            <div className="update-list">
-              {updates.map((update) => (
-                <p key={update}>{update}</p>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel ask-panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Grounded AI answer</p>
-                <h3>Ask CampusFlow</h3>
-              </div>
-            </div>
+            <span className="threshold">
+              {campusAnswer ? campusAnswer.confidence : "Context aware"}
+            </span>
+          </div>
+          <label>
+            Question
+            <textarea
+              value={campusQuestion}
+              onChange={(event) => setCampusQuestion(event.target.value)}
+              rows={3}
+              placeholder="Ask about exams, next classes, attendance, assignments, or whether you can attend an event."
+            />
+          </label>
+          <button
+            type="button"
+            className="primary-button ask-button"
+            onClick={askCampusFlow}
+            disabled={isAskingCampusFlow}
+          >
+            {isAskingCampusFlow ? "Thinking..." : "Ask CampusFlow"}
+          </button>
+          {campusAnswer ? (
             <div className="question-box">
-              <span>Question</span>
-              <strong>Can I skip tomorrow&apos;s DBMS class?</strong>
+              <span>Answer</span>
+              <strong>{campusAnswer.answer}</strong>
+              {campusAnswer.sources?.length ? (
+                <small>Sources: {campusAnswer.sources.join(", ")}</small>
+              ) : null}
             </div>
+          ) : (
             <p className="answer">
-              You should attend. DBMS is at 76.9%, which leaves only 0 safe bunks
-              before falling below 75%. Source: attendance tracker and confirmed
-              timetable.
+              Ask whether you can attend a college event, skip a class, prepare for an exam,
+              or prioritize pending work. CampusFlow will answer using your live attendance,
+              timetable, exams, and assignments.
             </p>
-          </section>
+          )}
         </section>
 
         <section className="panel">

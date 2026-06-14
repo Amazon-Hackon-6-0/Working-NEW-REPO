@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import agent, campusflow, health, integrations
 from app.core.config import settings
+from app.routes.campusbuddy.router import router as campusbuddy_router
 
 
 async def _discord_attendance_scheduler() -> None:
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
     app.include_router(agent.router, prefix=settings.api_v1_prefix)
     app.include_router(campusflow.router, prefix=settings.api_v1_prefix)
     app.include_router(integrations.router, prefix=settings.api_v1_prefix)
+    app.include_router(campusbuddy_router, prefix="/api/campusbuddy", tags=["campusbuddy"])
 
     @app.on_event("startup")
     async def start_discord_attendance_scheduler() -> None:

@@ -1,0 +1,20 @@
+{
+  "default": {
+    "academic_office": {
+      "name": "Academic Office",
+      "email": "academic.office@example.edu"
+    },
+    "exam_cell": {
+      "name": "Exam Cell",
+      "email": "examcell@example.edu"
+    },
+    "hostel_office": {
+      "name": "Hostel Office",
+      "email": "hostel@example.edu"
+    },
+    "placement_office": {
+      "name": "Placement Office",
+      "email": "placement@example.edu"
+    }
+  }
+}

@@ -7,6 +7,9 @@ from pydantic import BaseModel, Field
 
 AttendanceStatus = Literal["safe", "watch", "danger", "critical"]
 ClassStatus = Literal["held", "cancelled", "holiday", "teacher_absent"]
+ProcessCaseStatus = Literal["draft", "queued", "sent", "send_failed", "replied", "completed"]
+ProcessConfidence = Literal["low", "medium", "high"]
+ProcessDeliveryMode = Literal["queue", "email"]
 SubmissionStatus = Literal["submitted", "pending", "late", "missed", "unknown"]
 Weekday = Literal[
     "Monday",
@@ -168,3 +171,127 @@ class CampusQuestionResponse(BaseModel):
     answer: str
     sources: list[str]
     confidence: Literal["high", "medium", "low"]
+
+
+class ProcessPolicyUploadResponse(BaseModel):
+    document_name: str
+    college_id: str
+    chunks_count: int
+    message: str
+
+
+class ProcessPolicySummary(BaseModel):
+    college_id: str
+    document_name: str
+    chunks_count: int
+    uploaded_at: str
+
+
+class ProcessPolicyListResponse(BaseModel):
+    policies: list[ProcessPolicySummary]
+
+
+class ProcessCopilotAskRequest(BaseModel):
+    question: str = Field(..., min_length=3)
+    college_id: str = "default"
+
+
+class ProcessCopilotAskResponse(BaseModel):
+    answer: str
+    steps: list[str]
+    required_documents: list[str]
+    office_or_contact: str | None = None
+    deadline_or_timeline: str | None = None
+    email_draft: str | None = None
+    sources_used: list[str]
+    llm_used: bool
+    llm_provider: Literal["gemini", "fallback"]
+    llm_error: str | None = None
+    fallback_mode: bool
+    used_college_id: str
+
+
+class ProcessTask(BaseModel):
+    task_id: str
+    title: str
+    done: bool = False
+
+
+class ProcessCaseCreateRequest(BaseModel):
+    college_id: str = "default"
+    student_name: str | None = None
+    student_email: str | None = None
+    student_issue: str = Field(..., min_length=3)
+    course_or_subject: str | None = None
+    attached_document_names: list[str] = Field(default_factory=list)
+
+
+class ProcessCaseSendRequest(BaseModel):
+    student_approved: bool = True
+
+
+class ProcessCaseReplyRequest(BaseModel):
+    reply_from: str | None = None
+    reply_message: str = Field(..., min_length=2)
+
+
+class ProcessTaskUpdateRequest(BaseModel):
+    done: bool
+
+
+class ProcessInboundReplyRequest(BaseModel):
+    case_id: str | None = None
+    subject: str | None = None
+    from_email: str | None = None
+    reply_message: str = Field(..., min_length=2)
+
+
+class ProcessTimelineEvent(BaseModel):
+    event_id: str
+    event_type: str
+    title: str
+    message: str | None = None
+    created_at: str
+
+
+class ProcessReplyHistoryItem(BaseModel):
+    reply_id: str
+    reply_from: str | None = None
+    from_email: str | None = None
+    reply_message: str
+    received_at: str
+
+
+class ProcessCaseResponse(BaseModel):
+    case_id: str
+    college_id: str
+    issue_type: str
+    status: ProcessCaseStatus
+    routed_to_office: str
+    routed_to_email: str | None = None
+    delivery_mode: ProcessDeliveryMode
+    confidence: ProcessConfidence
+    summary: str
+    required_documents: list[str]
+    deadline_or_timeline: str | None = None
+    tasks: list[ProcessTask]
+    generated_message_subject: str
+    generated_message_body: str
+    sent_at: str | None = None
+    follow_up_due_at: str | None = None
+    reminder_count: int = 0
+    office_reply: str | None = None
+    reply_history: list[ProcessReplyHistoryItem] = Field(default_factory=list)
+    reply_outcome: str | None = None
+    student_next_action: str | None = None
+    last_student_notification: str | None = None
+    notification_channel: Literal["app", "email", "discord_optional"] = "app"
+    timeline: list[ProcessTimelineEvent] = Field(default_factory=list)
+    sources_used: list[str]
+    llm_used: bool
+    llm_provider: Literal["gemini", "fallback"]
+    fallback_mode: bool
+    llm_error: str | None = None
+    action_message: str | None = None
+    created_at: str
+    updated_at: str
