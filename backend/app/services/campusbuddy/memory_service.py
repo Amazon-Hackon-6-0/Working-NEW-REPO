@@ -1,16 +1,19 @@
-CURRENT_USER_ID = "student_001"
+from fastapi import HTTPException
 
-from app.services.campusbuddy.sqlite_store import delete_record, list_records, upsert_record
+from app.services.campusbuddy.sqlite_store import create_sequential_record, delete_record, list_records, upsert_record
 
 MEMORY_KIND = "memory"
 
 
-def get_current_user_id() -> str:
-    return CURRENT_USER_ID
+def require_user_id(user_id: str | None) -> str:
+    normalized_user_id = (user_id or "").strip()
+    if not normalized_user_id:
+        raise HTTPException(status_code=401, detail="CampusBuddy user identity is required.")
+    return normalized_user_id
 
 
-def get_trust_dashboard(user_id: str = CURRENT_USER_ID):
-    user_id = (user_id or CURRENT_USER_ID).strip() or CURRENT_USER_ID
+def get_trust_dashboard(user_id: str):
+    user_id = require_user_id(user_id)
     return {
         "student_alias": anonymous_name_for_student(user_id),
         "memory_paused": False,
@@ -23,12 +26,12 @@ def get_user_memories(user_id: str):
     return [memory for memory in list_records(MEMORY_KIND) if memory["user_id"] == user_id]
 
 
-def get_matchable_memories(exclude_user_id: str = CURRENT_USER_ID):
+def get_matchable_memories(exclude_user_id: str):
     return get_connector_candidate_memories(exclude_user_id)
 
 
 def get_connector_candidate_memories(
-    exclude_user_id: str = CURRENT_USER_ID,
+    exclude_user_id: str,
     include_group_suggestions: bool = False,
 ):
     return [
@@ -71,37 +74,38 @@ def get_group_suggestion_memories():
 
 def remember_memory(
     label: str,
+    student_id: str,
     memory_type: str = "Student-approved memory",
     used_for: dict | None = None,
-    student_id: str = CURRENT_USER_ID,
 ):
-    memories = list_records(MEMORY_KIND)
-    next_id = max([memory["id"] for memory in memories], default=0) + 1
-    student_id = (student_id or CURRENT_USER_ID).strip() or CURRENT_USER_ID
+    student_id = require_user_id(student_id)
     used_for = used_for or {
         "personalization": True,
         "peer_matching": False,
         "group_suggestions": False,
         "anonymous_campus_insight": False,
     }
-    memory = {
-        "id": next_id,
-        "user_id": student_id,
-        "label": label,
-        "text": label,
-        "reason": "Saved only after the student clicked Remember.",
-        "memory_type": memory_type,
-        "type": memory_type,
-        "visibility": "private_to_student",
-        "can_be_used_for_matching": bool(used_for.get("peer_matching")),
-        "used_for": used_for,
-    }
-    upsert_record(MEMORY_KIND, str(memory["id"]), memory)
-    return memory
+    def build_memory(record_id: str) -> dict:
+        next_id = int(record_id.rsplit("_", 1)[-1])
+        return {
+            "id": next_id,
+            "memory_id": record_id,
+            "user_id": student_id,
+            "label": label,
+            "text": label,
+            "reason": "Saved only after the student clicked Remember.",
+            "memory_type": memory_type,
+            "type": memory_type,
+            "visibility": "private_to_student",
+            "can_be_used_for_matching": bool(used_for.get("peer_matching")),
+            "used_for": used_for,
+        }
+
+    return create_sequential_record(MEMORY_KIND, "memory", build_memory)
 
 
-def delete_memory(memory_id: int, user_id: str = CURRENT_USER_ID):
-    user_id = (user_id or CURRENT_USER_ID).strip() or CURRENT_USER_ID
+def delete_memory(memory_id: int, user_id: str):
+    user_id = require_user_id(user_id)
     memory = next(
         (
             item
@@ -110,12 +114,11 @@ def delete_memory(memory_id: int, user_id: str = CURRENT_USER_ID):
         ),
         None,
     )
-    deleted = bool(memory and delete_record(MEMORY_KIND, str(memory_id)))
+    record_id = memory.get("memory_id", str(memory_id)) if memory else str(memory_id)
+    deleted = bool(memory and delete_record(MEMORY_KIND, record_id))
     return {"deleted": deleted, "id": memory_id}
 
 
 def anonymous_name_for_student(user_id: str) -> str:
-    if user_id == CURRENT_USER_ID:
-        return "Anonymous Student 001"
     suffix = user_id.split("_")[-1]
     return f"Anonymous Student {suffix}"

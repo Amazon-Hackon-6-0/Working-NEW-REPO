@@ -12,12 +12,12 @@ from app.services.campusbuddy.ai_service import (
 )
 from app.services.campusbuddy.memory_service import (
     get_connector_candidate_memories,
-    get_current_user_id,
+    require_user_id,
 )
 
 
 def connect_student(request_text: str, current_user_id: str | None = None):
-    current_user_id = current_user_id or get_current_user_id()
+    current_user_id = require_user_id(current_user_id)
     classification_result = classify_connector_request_with_status(request_text)
     classification = classification_result["classification"]
     source = "gemini" if classification else "fallback"

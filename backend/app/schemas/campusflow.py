@@ -219,6 +219,8 @@ class ProcessTask(BaseModel):
 
 class ProcessCaseCreateRequest(BaseModel):
     college_id: str = "default"
+    current_user_id: str | None = None
+    current_user_email: str | None = None
     student_name: str | None = None
     student_email: str | None = None
     student_issue: str = Field(..., min_length=3)

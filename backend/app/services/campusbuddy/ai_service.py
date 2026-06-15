@@ -24,8 +24,10 @@ CONNECTOR_CATEGORIES = {
 }
 
 
-def get_chat_response(message: str):
+def get_chat_response(message: str, student_id: str | None = None):
     mock_response = _normalize_response(create_friend_response(message), message, source="mock")
+    if student_id:
+        mock_response["student_id"] = student_id
     api_key = os.getenv("GEMINI_API_KEY")
     _log_ai_status()
 
@@ -35,7 +37,10 @@ def get_chat_response(message: str):
 
     try:
         gemini_response = _generate_with_gemini(message, api_key)
-        return _normalize_response(gemini_response, message, source="gemini")
+        response = _normalize_response(gemini_response, message, source="gemini")
+        if student_id:
+            response["student_id"] = student_id
+        return response
     except json.JSONDecodeError as exc:
         safe_error = _safe_gemini_error(exc, forced_category="gemini_parse_error")
         _log_safe_gemini_error("chat", safe_error)

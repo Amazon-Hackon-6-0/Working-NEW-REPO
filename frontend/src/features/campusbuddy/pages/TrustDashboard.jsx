@@ -2,18 +2,6 @@ import { useEffect, useState } from "react";
 import CampusBuddyHeader from "../components/CampusBuddyHeader.jsx";
 import { campusbuddyApi } from "../services/campusbuddyApi.js";
 
-const studentOptions = [
-  { id: "student_001", label: "student_001 - Current Student" },
-  { id: "student_002", label: "student_002 - Student 002" },
-  { id: "student_003", label: "student_003 - Student 003" },
-  { id: "student_004", label: "student_004 - Student 004" },
-  { id: "student_005", label: "student_005 - Student 005" },
-  { id: "student_006", label: "student_006 - Student 006" },
-  { id: "student_007", label: "student_007 - Student 007" },
-  { id: "student_008", label: "student_008 - Student 008" },
-  { id: "student_009", label: "student_009 - Student 009" },
-];
-
 const defaultUsedFor = {
   personalization: true,
   peer_matching: false,
@@ -21,16 +9,18 @@ const defaultUsedFor = {
   anonymous_campus_insight: false,
 };
 
-export default function TrustDashboard() {
+export default function TrustDashboard({ currentUser }) {
   const [data, setData] = useState(null);
-  const [selectedStudentId, setSelectedStudentId] = useState("student_001");
   const [memoryLabel, setMemoryLabel] = useState("I like badminton");
   const [memoryType, setMemoryType] = useState("Interest");
   const [usedFor, setUsedFor] = useState(defaultUsedFor);
   const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState("");
 
-  async function load(studentId = selectedStudentId) {
+  const currentUserId = currentUser.userId;
+
+  async function load(studentId = currentUserId) {
+    if (!studentId) return;
     setError("");
 
     try {
@@ -43,8 +33,10 @@ export default function TrustDashboard() {
   useEffect(() => {
     let isActive = true;
 
+    if (!currentUserId) return undefined;
+
     campusbuddyApi
-      .trustDashboard(selectedStudentId)
+      .trustDashboard(currentUserId)
       .then((nextData) => {
         if (!isActive) return;
         setData(nextData);
@@ -58,7 +50,7 @@ export default function TrustDashboard() {
     return () => {
       isActive = false;
     };
-  }, [selectedStudentId]);
+  }, [currentUserId]);
 
   async function addMemory(event) {
     event.preventDefault();
@@ -69,10 +61,10 @@ export default function TrustDashboard() {
     setError("");
 
     try {
-      const saved = await campusbuddyApi.remember(trimmedLabel, memoryType, usedFor, selectedStudentId);
-      setStatusMessage(`Remembered for ${selectedStudentId}: ${saved.label}`);
+      const saved = await campusbuddyApi.remember(trimmedLabel, memoryType, usedFor, currentUserId);
+      setStatusMessage(`Remembered for ${currentUser.name || currentUserId}: ${saved.label}`);
       setMemoryLabel("");
-      await load(selectedStudentId);
+      await load(currentUserId);
     } catch (requestError) {
       setError("Could not save this memory right now.");
     }
@@ -83,9 +75,9 @@ export default function TrustDashboard() {
     setError("");
 
     try {
-      const result = await campusbuddyApi.deleteMemory(id, selectedStudentId);
+      const result = await campusbuddyApi.deleteMemory(id, currentUserId);
       setStatusMessage(result.deleted ? "Memory deleted." : "Memory was not found for this student.");
-      await load(selectedStudentId);
+      await load(currentUserId);
     } catch (requestError) {
       setError("Could not delete this memory right now.");
     }
@@ -105,18 +97,8 @@ export default function TrustDashboard() {
       </CampusBuddyHeader>
 
       <section className="cb-form">
-        <label className="cb-select-label cb-student-select">
-          Current Student
-          <select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)}>
-            {studentOptions.map((student) => (
-              <option key={student.id} value={student.id}>
-                {student.label}
-              </option>
-            ))}
-          </select>
-        </label>
         <p className="cb-small-note">
-          Choose a student whose private Trust Dashboard is open.
+          Private Trust Dashboard for {currentUser.name || "the current user"}.
         </p>
       </section>
 

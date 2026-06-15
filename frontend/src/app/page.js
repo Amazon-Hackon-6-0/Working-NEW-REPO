@@ -12,10 +12,11 @@ import {
   MessageCircle,
   Orbit,
   ShieldCheck,
-  Upload,
   Users,
   Zap,
 } from "lucide-react";
+import AuthGate from "../features/auth/AuthGate";
+import { readCampusBuddyProfile } from "../features/campusbuddy/services/campusbuddyProfile";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
@@ -236,7 +237,7 @@ function compactSubjectCode(subjectName, attendance = []) {
     .toUpperCase();
 }
 
-export default function Home() {
+function CampusFlowDashboard({ authUser, onLogout }) {
   const threshold = 75;
   const [integrationStatus, setIntegrationStatus] = useState(null);
   const [integrationMessage, setIntegrationMessage] = useState(
@@ -267,8 +268,8 @@ export default function Home() {
   );
   const [policyUploadStatus, setPolicyUploadStatus] = useState("idle");
   const [isPolicyUploading, setIsPolicyUploading] = useState(false);
-  const [relayStudentName, setRelayStudentName] = useState("");
-  const [relayStudentEmail, setRelayStudentEmail] = useState("");
+  const [relayStudentName, setRelayStudentName] = useState(() => authUser.name || readCampusBuddyProfile().name);
+  const [relayStudentEmail, setRelayStudentEmail] = useState(() => authUser.email || readCampusBuddyProfile().email);
   const [relaySubject, setRelaySubject] = useState("");
   const [relayAttachedDocs] = useState("");
   const [relayIssue, setRelayIssue] = useState(
@@ -740,6 +741,8 @@ export default function Home() {
           college_id: processCollegeId || "default",
           student_name: relayStudentName || null,
           student_email: relayStudentEmail || null,
+          current_user_id: readCampusBuddyProfile().userId,
+          current_user_email: relayStudentEmail || readCampusBuddyProfile().email || null,
           student_issue: relayIssue,
           course_or_subject: relaySubject || null,
           attached_document_names: attachedDocumentNames(),
@@ -916,16 +919,12 @@ export default function Home() {
             <small>by CampusFlow</small>
           </span>
         </button>
-        <div className="nav-center">
-          <a href="#dashboard">Dashboard</a>
-          <a href="#attendance">Attendance</a>
-          <a href="#timetable">Timetable</a>
-          <a href="#notifications">Updates</a>
-          <a href="#campusbuddy-ai">CampusBuddy AI</a>
-        </div>
         <div className="nav-status">
           <span className="status-dot" />
-          <span>Live campus intelligence</span>
+          <span>{authUser.name}</span>
+          <button className="nav-logout" onClick={onLogout} type="button">
+            Logout
+          </button>
         </div>
       </nav>
 
@@ -971,14 +970,6 @@ export default function Home() {
               exams, campus requests, Discord nudges, and CampusBuddy AI into one
               premium student command center.
             </p>
-            <div className="hero-actions">
-              <a className="primary-button hero-button" href="#dashboard">
-                Get Started <ArrowRight size={18} />
-              </a>
-              <a className="secondary-button hero-button" href="#timetable">
-                <Upload size={18} /> Upload Timetable
-              </a>
-            </div>
           </div>
         </section>
 
@@ -1760,5 +1751,15 @@ export default function Home() {
         </section>
       </section>
     </main>
+  );
+}
+
+export default function Home() {
+  return (
+    <AuthGate>
+      {({ authUser, onLogout }) => (
+        <CampusFlowDashboard authUser={authUser} onLogout={onLogout} />
+      )}
+    </AuthGate>
   );
 }

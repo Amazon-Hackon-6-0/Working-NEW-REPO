@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 
+import AuthGate from "../../../features/auth/AuthGate";
 import CampusBuddyShell from "../../../features/campusbuddy/components/CampusBuddyShell";
 import CampusBuddyChat from "../../../features/campusbuddy/pages/CampusBuddyChat";
 import CampusBuddyHome from "../../../features/campusbuddy/pages/CampusBuddyHome";
@@ -10,6 +11,7 @@ import CommitteeEscalation from "../../../features/campusbuddy/pages/CommitteeEs
 import Groups from "../../../features/campusbuddy/pages/Groups";
 import PeopleConnector from "../../../features/campusbuddy/pages/PeopleConnector";
 import TrustDashboard from "../../../features/campusbuddy/pages/TrustDashboard";
+import { readCampusBuddyProfile } from "../../../features/campusbuddy/services/campusbuddyProfile";
 
 const campusBuddyRoutes = {
   "/campusbuddy": CampusBuddyHome,
@@ -21,19 +23,35 @@ const campusBuddyRoutes = {
   "/campusbuddy/committee-dashboard": CommitteeDashboard,
 };
 
-export default function CampusBuddyRoute() {
+function CampusBuddyExperience({ authUser, onLogout }) {
   const pathname = usePathname();
   const router = useRouter();
   const normalizedPath = pathname !== "/" ? pathname.replace(/\/$/, "") : pathname;
   const CampusBuddyPage = campusBuddyRoutes[normalizedPath] || CampusBuddyHome;
+  const currentUser = authUser || readCampusBuddyProfile();
 
   function navigate(nextPath) {
     router.push(nextPath);
   }
 
   return (
-    <CampusBuddyShell path={normalizedPath} navigate={navigate}>
-      <CampusBuddyPage navigate={navigate} />
+    <CampusBuddyShell
+      currentUser={currentUser}
+      onLogout={onLogout}
+      path={normalizedPath}
+      navigate={navigate}
+    >
+      <CampusBuddyPage currentUser={currentUser} navigate={navigate} />
     </CampusBuddyShell>
+  );
+}
+
+export default function CampusBuddyRoute() {
+  return (
+    <AuthGate>
+      {({ authUser, onLogout }) => (
+        <CampusBuddyExperience authUser={authUser} onLogout={onLogout} />
+      )}
+    </AuthGate>
   );
 }

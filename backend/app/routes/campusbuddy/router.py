@@ -25,13 +25,14 @@ from app.services.campusbuddy.hobby_group_service import (
 )
 from app.services.campusbuddy.matching_service import connect_student
 from app.services.campusbuddy.memory_service import delete_memory, get_trust_dashboard, remember_memory
+from app.services.campusbuddy.memory_service import require_user_id
 
 router = APIRouter()
 
 
 class ChatRequest(BaseModel):
     message: str
-    student_id: str = "student_001"
+    student_id: str
 
 
 class ChatResponse(BaseModel):
@@ -67,7 +68,7 @@ class MemoryRequest(BaseModel):
     label: str
     memory_type: str = "Student-approved memory"
     used_for: dict = Field(default_factory=dict)
-    student_id: str = "student_001"
+    student_id: str
 
 
 class ConnectRequest(BaseModel):
@@ -75,7 +76,7 @@ class ConnectRequest(BaseModel):
     query: str | None = None
     message: str | None = None
     request_text: str | None = None
-    student_id: str = "student_001"
+    student_id: str
 
 
 class ConnectionRequestCreate(BaseModel):
@@ -106,7 +107,7 @@ class GroupRequest(BaseModel):
     interest: str | None = None
     hobby: str | None = None
     hobby_text: str | None = None
-    student_id: str = "student_001"
+    student_id: str
 
 
 class GroupJoinRequest(BaseModel):
@@ -120,7 +121,8 @@ class EscalationRequest(BaseModel):
 
 @router.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-    return get_chat_response(request.message)
+    require_user_id(request.student_id)
+    return get_chat_response(request.message, request.student_id)
 
 
 @router.get("/ai-status", response_model=AIStatusResponse)
@@ -134,17 +136,17 @@ def gemini_debug():
 
 
 @router.get("/trust-dashboard")
-def trust_dashboard(student_id: str = "student_001"):
+def trust_dashboard(student_id: str):
     return get_trust_dashboard(student_id)
 
 
 @router.post("/memory")
 def memory(request: MemoryRequest):
-    return remember_memory(request.label, request.memory_type, request.used_for or None, request.student_id)
+    return remember_memory(request.label, request.student_id, request.memory_type, request.used_for or None)
 
 
 @router.delete("/memory/{memory_id}")
-def remove_memory(memory_id: int, student_id: str = "student_001"):
+def remove_memory(memory_id: int, student_id: str):
     return delete_memory(memory_id, student_id)
 
 

@@ -9,27 +9,15 @@ const prompts = [
   "Mess food quality has been bad for 3 days.",
 ];
 
-const studentOptions = [
-  { id: "student_001", label: "student_001 - Current Student" },
-  { id: "student_002", label: "student_002 - Student 002" },
-  { id: "student_003", label: "student_003 - Student 003" },
-  { id: "student_004", label: "student_004 - Student 004" },
-  { id: "student_005", label: "student_005 - Student 005" },
-  { id: "student_006", label: "student_006 - Student 006" },
-  { id: "student_007", label: "student_007 - Student 007" },
-  { id: "student_008", label: "student_008 - Student 008" },
-  { id: "student_009", label: "student_009 - Student 009" },
-];
-
-export default function CampusBuddyChat() {
+export default function CampusBuddyChat({ currentUser }) {
   const [message, setMessage] = useState(prompts[0]);
   const [chat, setChat] = useState([]);
   const [remembered, setRemembered] = useState("");
-  const [selectedStudentId, setSelectedStudentId] = useState("student_001");
+  const currentUserId = currentUser.userId;
 
   async function send(customMessage = message) {
-    if (!customMessage.trim()) return;
-    const result = await campusbuddyApi.chat(customMessage, selectedStudentId);
+    if (!customMessage.trim() || !currentUserId) return;
+    const result = await campusbuddyApi.chat(customMessage, currentUserId);
     setChat((current) => [...current, { role: "student", text: customMessage }, { role: "buddy", ...result }]);
     setMessage("");
   }
@@ -40,9 +28,9 @@ export default function CampusBuddyChat() {
       memoryText,
       "Student-approved memory",
       candidate.used_for || inferMemoryUsage(memoryText),
-      selectedStudentId
+      currentUserId
     );
-    setRemembered(`Remembered for ${selectedStudentId}: ${saved.label}`);
+    setRemembered(`Remembered for ${currentUser.name || currentUserId}: ${saved.label}`);
   }
 
   function inferMemoryUsage(memoryText) {
@@ -102,18 +90,8 @@ export default function CampusBuddyChat() {
         <span>You can stay private while you build confidence to connect.</span>
       </section>
       <section className="cb-form">
-        <label className="cb-select-label cb-student-select">
-          Current Student
-          <select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)}>
-            {studentOptions.map((student) => (
-              <option key={student.id} value={student.id}>
-                {student.label}
-              </option>
-            ))}
-          </select>
-        </label>
         <p className="cb-small-note">
-          Choose a student for this chat. Memories are saved only after clicking Remember.
+          This chat is scoped to {currentUser.name || "the current user"}. Memories are saved only after clicking Remember.
         </p>
       </section>
       <section className="cb-scenarios">

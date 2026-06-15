@@ -10,8 +10,8 @@ from app.services.campusbuddy.ai_service import (
     _safe_gemini_error,
 )
 from app.services.campusbuddy.discord_bridge import ensure_interest_group_channel
-from app.services.campusbuddy.memory_service import get_group_suggestion_memories
-from app.services.campusbuddy.sqlite_store import count_records, list_records, upsert_record
+from app.services.campusbuddy.memory_service import get_group_suggestion_memories, require_user_id
+from app.services.campusbuddy.sqlite_store import create_sequential_record, list_records, mutate_record, upsert_record
 
 
 GROUP_THRESHOLD = 3
@@ -78,7 +78,7 @@ def collect_hobby_interests_from_memories() -> dict:
 
 
 def list_group_invites_for_student(student_id: str) -> dict:
-    student_id = (student_id or "student_001").strip() or "student_001"
+    student_id = require_user_id(student_id)
     build_groups_from_trust_memories()
     return {
         "student_id": student_id,
@@ -91,24 +91,28 @@ def list_group_invites_for_student(student_id: str) -> dict:
 
 
 def join_group(group_id: str, student_id: str) -> dict:
-    student_id = (student_id or "student_001").strip() or "student_001"
+    student_id = require_user_id(student_id)
     build_groups_from_trust_memories()
-    group = find_group_by_id(group_id)
-    invite = find_invite(group_id, student_id)
-    if invite is None and group is not None:
-        invite = create_group_invite(student_id, group)
+    with GROUP_CREATION_LOCK:
+        group = find_group_by_id(group_id)
+        invite = find_invite(group_id, student_id)
+        if invite is None and group is not None:
+            invite = create_group_invite(student_id, group)
 
-    if invite is None:
-        return {
-            "joined": False,
-            "group_id": group_id,
-            "invite_status": None,
-            "message": "No private invite was found for this student and group.",
-        }
+        if invite is None:
+            return {
+                "joined": False,
+                "group_id": group_id,
+                "invite_status": None,
+                "message": "No private invite was found for this student and group.",
+            }
 
-    invite["invite_status"] = "joined"
-    invite["joined_at"] = now_iso()
-    save_group_invite(invite)
+        def apply_join(current_invite: dict) -> dict:
+            current_invite["invite_status"] = "joined"
+            current_invite["joined_at"] = now_iso()
+            return current_invite
+
+        invite = mutate_record(GROUP_INVITE_KIND, invite["invite_id"], apply_join) or invite
     return {
         "joined": True,
         "group_id": group_id,
@@ -119,20 +123,25 @@ def join_group(group_id: str, student_id: str) -> dict:
 
 
 def ignore_group_invite(group_id: str, student_id: str) -> dict:
-    student_id = (student_id or "student_001").strip() or "student_001"
+    student_id = require_user_id(student_id)
     build_groups_from_trust_memories()
-    invite = find_invite(group_id, student_id)
-    if invite is None:
-        return {
-            "ignored": False,
-            "group_id": group_id,
-            "invite_status": None,
-            "message": "No private invite was found for this student and group.",
-        }
+    with GROUP_CREATION_LOCK:
+        invite = find_invite(group_id, student_id)
+        if invite is None:
+            return {
+                "ignored": False,
+                "group_id": group_id,
+                "invite_status": None,
+                "message": "No private invite was found for this student and group.",
+            }
 
-    invite["invite_status"] = "ignored"
-    invite["ignored_at"] = now_iso()
-    save_group_invite(invite)
+        def apply_ignore(current_invite: dict) -> dict:
+            if current_invite.get("invite_status") != "joined":
+                current_invite["invite_status"] = "ignored"
+                current_invite["ignored_at"] = now_iso()
+            return current_invite
+
+        invite = mutate_record(GROUP_INVITE_KIND, invite["invite_id"], apply_ignore) or invite
     return {
         "ignored": True,
         "group_id": group_id,
@@ -143,58 +152,59 @@ def ignore_group_invite(group_id: str, student_id: str) -> dict:
 
 
 def submit_hobby(student_id: str, hobby_text: str) -> dict:
-    student_id = (student_id or "student_001").strip() or "student_001"
+    student_id = require_user_id(student_id)
     hobby_text = (hobby_text or "").strip()
     hobby_key = normalize_hobby_key(hobby_text)
     hobby_label = hobby_key_to_label(hobby_key)
-    existing_group = find_group_by_hobby(hobby_key)
-    duplicate_student_hobby = has_student_submitted_hobby(student_id, hobby_key)
+    with GROUP_CREATION_LOCK:
+        existing_group = find_group_by_hobby(hobby_key)
+        duplicate_student_hobby = has_student_submitted_hobby(student_id, hobby_key)
 
-    store_hobby_submission(student_id, hobby_text, hobby_key, hobby_label, duplicate_student_hobby)
+        store_hobby_submission(student_id, hobby_text, hobby_key, hobby_label, duplicate_student_hobby)
 
-    unique_student_count = get_unique_student_count_for_hobby(hobby_key)
+        unique_student_count = get_unique_student_count_for_hobby(hobby_key)
 
-    if duplicate_student_hobby:
-        return build_hobby_response(
-            hobby_text=hobby_text,
-            hobby_key=hobby_key,
-            hobby_label=hobby_label,
-            unique_student_count=unique_student_count,
-            duplicate_student_hobby=True,
-            group=existing_group,
-            group_created=False,
-            invite=None,
-            message="You already shared this hobby. It was saved, but it does not increase the group threshold.",
-        )
+        if duplicate_student_hobby:
+            return build_hobby_response(
+                hobby_text=hobby_text,
+                hobby_key=hobby_key,
+                hobby_label=hobby_label,
+                unique_student_count=unique_student_count,
+                duplicate_student_hobby=True,
+                group=existing_group,
+                group_created=False,
+                invite=None,
+                message="You already shared this hobby. It was saved, but it does not increase the group threshold.",
+            )
 
-    if existing_group:
-        invite = create_group_invite(student_id, existing_group)
-        return build_hobby_response(
-            hobby_text=hobby_text,
-            hobby_key=hobby_key,
-            hobby_label=hobby_label,
-            unique_student_count=unique_student_count,
-            duplicate_student_hobby=False,
-            group=existing_group,
-            group_created=False,
-            invite=invite,
-            message="A group already exists for this hobby. You can join it when you feel comfortable.",
-        )
+        if existing_group:
+            invite = create_group_invite(student_id, existing_group)
+            return build_hobby_response(
+                hobby_text=hobby_text,
+                hobby_key=hobby_key,
+                hobby_label=hobby_label,
+                unique_student_count=unique_student_count,
+                duplicate_student_hobby=False,
+                group=existing_group,
+                group_created=False,
+                invite=invite,
+                message="A group already exists for this hobby. You can join it when you feel comfortable.",
+            )
 
-    if unique_student_count >= GROUP_THRESHOLD:
-        group = create_hobby_group(hobby_key, hobby_label, unique_student_count)
-        invite = create_group_invite(student_id, group)
-        return build_hobby_response(
-            hobby_text=hobby_text,
-            hobby_key=hobby_key,
-            hobby_label=hobby_label,
-            unique_student_count=unique_student_count,
-            duplicate_student_hobby=False,
-            group=group,
-            group_created=True,
-            invite=invite,
-            message="Multiple students share this hobby. A consent-based group is ready.",
-        )
+        if unique_student_count >= GROUP_THRESHOLD:
+            group = create_hobby_group(hobby_key, hobby_label, unique_student_count)
+            invite = create_group_invite(student_id, group)
+            return build_hobby_response(
+                hobby_text=hobby_text,
+                hobby_key=hobby_key,
+                hobby_label=hobby_label,
+                unique_student_count=unique_student_count,
+                duplicate_student_hobby=False,
+                group=group,
+                group_created=True,
+                invite=invite,
+                message="Multiple students share this hobby. A consent-based group is ready.",
+            )
 
     return build_hobby_response(
         hobby_text=hobby_text,
@@ -248,16 +258,18 @@ def store_hobby_submission(
     hobby_label: str,
     duplicate_student_hobby: bool,
 ) -> None:
-    submission = {
-        "submission_id": f"hobby_submission_{count_records(HOBBY_SUBMISSION_KIND) + 1:03d}",
-        "student_id": student_id,
-        "hobby_text": hobby_text,
-        "hobby_key": hobby_key,
-        "hobby_label": hobby_label,
-        "duplicate_student_hobby": duplicate_student_hobby,
-        "created_at": now_iso(),
-    }
-    save_hobby_submission(submission)
+    def build_submission(submission_id: str) -> dict:
+        return {
+            "submission_id": submission_id,
+            "student_id": student_id,
+            "hobby_text": hobby_text,
+            "hobby_key": hobby_key,
+            "hobby_label": hobby_label,
+            "duplicate_student_hobby": duplicate_student_hobby,
+            "created_at": now_iso(),
+        }
+
+    create_sequential_record(HOBBY_SUBMISSION_KIND, "hobby_submission", build_submission)
 
 
 def has_student_submitted_hobby(student_id: str, hobby_key: str) -> bool:
@@ -303,27 +315,33 @@ def create_hobby_group(hobby_key: str, hobby_label: str, unique_student_count: i
             member_interest_count=unique_student_count,
             threshold=GROUP_THRESHOLD,
         )
-        group = {
-            "group_id": f"group_{count_records(HOBBY_GROUP_KIND) + 1:03d}",
-            "hobby_key": hobby_key,
-            "hobby_label": hobby_label,
-            "group_name": group_name,
-            "member_interest_count": unique_student_count,
-            "unique_student_count": unique_student_count,
-            "threshold": GROUP_THRESHOLD,
-            "destination": mock_discord_destination_for_hobby(hobby_key),
-            "status": "mock_discord_group_ready",
-            "invite_mode": "consent_required",
-            "group_summary": summary_result["summary"],
-            "summary_source": summary_result["source"],
-            "summary_fallback_reason": summary_result["fallback_reason"],
-            "created_at": now_iso(),
-        }
+        def build_group(group_id: str) -> dict:
+            return {
+                "group_id": group_id,
+                "hobby_key": hobby_key,
+                "hobby_label": hobby_label,
+                "group_name": group_name,
+                "member_interest_count": unique_student_count,
+                "unique_student_count": unique_student_count,
+                "threshold": GROUP_THRESHOLD,
+                "destination": mock_discord_destination_for_hobby(hobby_key),
+                "status": "mock_discord_group_ready",
+                "invite_mode": "consent_required",
+                "group_summary": summary_result["summary"],
+                "summary_source": summary_result["source"],
+                "summary_fallback_reason": summary_result["fallback_reason"],
+                "created_at": now_iso(),
+            }
+
+        group = create_sequential_record(HOBBY_GROUP_KIND, "group", build_group)
         discord_result = ensure_interest_group_channel(group)
         group["discord_channel"] = discord_result
         if discord_result.get("channel_name"):
             group["destination"] = f"#{discord_result['channel_name']}"
             group["discord_channel_id"] = discord_result.get("channel_id")
+            group["discord_announcement_channel_id"] = discord_result.get("announcement_channel_id")
+            group["discord_invite_url"] = discord_result.get("invite_url")
+            group["discord_private"] = bool(discord_result.get("private"))
             group["status"] = "discord_group_ready"
         save_hobby_group(group)
         return group
@@ -335,7 +353,22 @@ def ensure_group_for_hobby(hobby_key: str, hobby_label: str, member_interest_cou
         return create_hobby_group(hobby_key, hobby_label, member_interest_count)
 
     update_group_interest_count(group, member_interest_count)
+    if group.get("discord_private") is True:
+        refresh_group_discord_invite(group)
     return group
+
+
+def refresh_group_discord_invite(group: dict) -> None:
+    discord_result = ensure_interest_group_channel(group)
+    group["discord_channel"] = discord_result
+    if discord_result.get("channel_name"):
+        group["destination"] = f"#{discord_result['channel_name']}"
+        group["discord_channel_id"] = discord_result.get("channel_id")
+        group["discord_announcement_channel_id"] = discord_result.get("announcement_channel_id")
+        group["discord_invite_url"] = discord_result.get("invite_url")
+        group["discord_private"] = bool(discord_result.get("private"))
+        group["status"] = "discord_group_ready"
+        save_hobby_group(group)
 
 
 def ensure_group_invites_for_interested_students(group: dict, user_ids: set[str]) -> None:
@@ -463,21 +496,22 @@ def create_group_invite(student_id: str, group: dict) -> dict:
         save_group_invite(existing_invite)
         return existing_invite
 
-    invite = {
-        "invite_id": f"invite_{count_records(GROUP_INVITE_KIND) + 1:03d}",
-        "group_id": group["group_id"],
-        "hobby_key": group["hobby_key"],
-        "hobby_label": group["hobby_label"],
-        "group_name": group["group_name"],
-        "student_id_internal": student_id,
-        "invite_status": "ready_to_join",
-        "invite_mode": "consent_required",
-        "destination": group["destination"],
-        "message": f"A {group['hobby_label']} group is ready. Join when you feel comfortable.",
-        "created_at": now_iso(),
-    }
-    save_group_invite(invite)
-    return invite
+    def build_invite(invite_id: str) -> dict:
+        return {
+            "invite_id": invite_id,
+            "group_id": group["group_id"],
+            "hobby_key": group["hobby_key"],
+            "hobby_label": group["hobby_label"],
+            "group_name": group["group_name"],
+            "student_id_internal": student_id,
+            "invite_status": "ready_to_join",
+            "invite_mode": "consent_required",
+            "destination": group["destination"],
+            "message": f"A {group['hobby_label']} group is ready. Join when you feel comfortable.",
+            "created_at": now_iso(),
+        }
+
+    return create_sequential_record(GROUP_INVITE_KIND, "invite", build_invite)
 
 
 def find_existing_invite_for_group(student_id: str, group: dict) -> dict | None:
@@ -645,17 +679,25 @@ def sync_group_identity(target: dict, source: dict) -> None:
     target["invite_mode"] = source.get("invite_mode", target["invite_mode"])
     target["discord_channel"] = source.get("discord_channel", target.get("discord_channel"))
     target["discord_channel_id"] = source.get("discord_channel_id", target.get("discord_channel_id"))
+    target["discord_announcement_channel_id"] = source.get(
+        "discord_announcement_channel_id",
+        target.get("discord_announcement_channel_id"),
+    )
+    target["discord_invite_url"] = source.get("discord_invite_url", target.get("discord_invite_url"))
+    target["discord_private"] = source.get("discord_private", target.get("discord_private"))
     save_hobby_group(target)
 
 
 def public_group(group: dict, student_id: str | None = None) -> dict:
     student_status = current_student_group_status(student_id, group) if student_id else None
+    consensus_interest_count = min(int(group["member_interest_count"]), int(group["threshold"]))
     return {
         "group_id": group["group_id"],
         "hobby_key": group["hobby_key"],
         "hobby_label": group["hobby_label"],
         "group_name": group["group_name"],
         "member_interest_count": group["member_interest_count"],
+        "consensus_interest_count": consensus_interest_count,
         "threshold": group["threshold"],
         "destination": group["destination"],
         "status": group["status"],
@@ -664,6 +706,9 @@ def public_group(group: dict, student_id: str | None = None) -> dict:
         "summary_source": group.get("summary_source"),
         "summary_fallback_reason": group.get("summary_fallback_reason"),
         "discord_channel_id": group.get("discord_channel_id"),
+        "discord_announcement_channel_id": group.get("discord_announcement_channel_id"),
+        "discord_invite_url": group.get("discord_invite_url"),
+        "discord_private": bool(group.get("discord_private")),
         "discord_delivery": group.get("discord_channel"),
         "current_student_status": student_status or "not_joined",
     }

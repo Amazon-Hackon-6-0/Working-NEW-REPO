@@ -11,6 +11,7 @@ from app.core.config import settings
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 CHANNEL_CREATION_LOCK = Lock()
+VIEW_CHANNEL_PERMISSION = 1 << 10
 
 
 def send_complaint_escalation_to_discord(escalation: dict) -> dict[str, Any]:
@@ -73,31 +74,62 @@ def ensure_interest_group_channel(group: dict) -> dict[str, Any]:
                         f"CampusBuddy opt-in group for {group.get('hobby_label', 'shared interest')}. "
                         "Students join voluntarily; identities are not exposed by CampusBuddy."
                     ),
+                    private=False,
                 )
                 created = True
+            else:
+                channel = ensure_invite_joinable_channel(guild_id, channel)
+
+        invite = create_channel_invite(channel["id"])
+        announcement_channel_id = resolve_general_channel_id(guild_id)
+        if not announcement_channel_id:
+            return {
+                "created": created,
+                "sent": False,
+                "private": False,
+                "channel_id": channel["id"],
+                "channel_name": channel["name"],
+                "invite_url": invite.get("url"),
+                "reason": "discord_general_channel_not_found",
+            }
 
         payload = {
             "allowed_mentions": {"parse": []},
-            "content": f"**{group.get('group_name', 'CampusBuddy group')} is ready.**",
+            "content": f"**{group.get('group_name', 'CampusBuddy group')} opt-in channel is ready.**\n{invite.get('url')}",
             "embeds": [
                 {
                     "title": group.get("group_name") or "CampusBuddy interest group",
-                    "description": group.get("group_summary") or "A consent-based interest group is ready.",
+                    "description": (
+                        group.get("group_summary")
+                        or "A consent-based opt-in interest group is ready."
+                    ),
                     "color": 5763719,
                     "fields": [
                         {"name": "Interest", "value": str(group.get("hobby_label") or "Shared interest"), "inline": True},
-                        {"name": "Interested students", "value": str(group.get("member_interest_count") or 0), "inline": True},
-                        {"name": "Invite mode", "value": "Opt-in only", "inline": True},
+                        {
+                            "name": "Interested students",
+                            "value": str(consensus_count_for_group(group)),
+                            "inline": True,
+                        },
+                        {"name": "Channel type", "value": "Invite-based opt-in channel", "inline": True},
+                        {
+                            "name": "How to join",
+                            "value": "Use the invite link above. CampusBuddy does not expose who submitted the interest.",
+                        },
                     ],
                 }
             ],
         }
-        message = send_channel_message(channel["id"], payload)
+        message = send_channel_message(announcement_channel_id, payload)
         return {
             "created": created,
             "sent": True,
+            "private": False,
             "channel_id": channel["id"],
             "channel_name": channel["name"],
+            "announcement_channel_id": announcement_channel_id,
+            "invite_code": invite.get("code"),
+            "invite_url": invite.get("url"),
             "message_id": message.get("id"),
             "reason": None,
         }
@@ -140,6 +172,16 @@ def resolve_committee_channel_id(target_group: str | None) -> str | None:
     return settings.discord_channel_id
 
 
+def resolve_general_channel_id(guild_id: str) -> str | None:
+    if settings.discord_channel_id:
+        return settings.discord_channel_id
+
+    channel = find_text_channel(guild_id, "general")
+    if channel:
+        return channel["id"]
+    return None
+
+
 def resolve_guild_id() -> str | None:
     if settings.discord_guild_id:
         return settings.discord_guild_id
@@ -173,12 +215,15 @@ def find_text_channel(guild_id: str, channel_name: str) -> dict[str, Any] | None
     return None
 
 
-def create_text_channel(guild_id: str, channel_name: str, topic: str) -> dict[str, Any]:
+def create_text_channel(guild_id: str, channel_name: str, topic: str, private: bool = False) -> dict[str, Any]:
     payload = {
         "name": normalize_channel_name(channel_name),
         "type": 0,
         "topic": topic[:1024],
     }
+    if private:
+        payload["permission_overwrites"] = private_channel_overwrites(guild_id)
+
     with httpx.Client(timeout=20) as client:
         response = client.post(
             f"{DISCORD_API_BASE}/guilds/{guild_id}/channels",
@@ -187,6 +232,77 @@ def create_text_channel(guild_id: str, channel_name: str, topic: str) -> dict[st
         )
     response.raise_for_status()
     return response.json()
+
+
+def ensure_invite_joinable_channel(guild_id: str, channel: dict[str, Any]) -> dict[str, Any]:
+    overwrites = channel.get("permission_overwrites") or []
+    everyone_overwrite = next(
+        (
+            overwrite
+            for overwrite in overwrites
+            if overwrite.get("id") == guild_id and overwrite.get("type") == 0
+        ),
+        None,
+    )
+    deny_value = int(everyone_overwrite.get("deny", "0")) if everyone_overwrite else 0
+    if not (deny_value & VIEW_CHANNEL_PERMISSION):
+        return channel
+
+    next_overwrites = [
+        overwrite
+        for overwrite in overwrites
+        if not (overwrite.get("id") == guild_id and overwrite.get("type") == 0)
+    ]
+    payload = {"permission_overwrites": next_overwrites}
+    with httpx.Client(timeout=20) as client:
+        response = client.patch(
+            f"{DISCORD_API_BASE}/channels/{channel['id']}",
+            headers=discord_headers(),
+            json=payload,
+        )
+    response.raise_for_status()
+    return response.json()
+
+
+def consensus_count_for_group(group: dict[str, Any]) -> int:
+    try:
+        member_count = int(group.get("member_interest_count") or 0)
+        threshold = int(group.get("threshold") or 0)
+    except (TypeError, ValueError):
+        return 0
+    if threshold <= 0:
+        return member_count
+    return min(member_count, threshold)
+
+
+def private_channel_overwrites(guild_id: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": guild_id,
+            "type": 0,
+            "allow": "0",
+            "deny": str(VIEW_CHANNEL_PERMISSION),
+        }
+    ]
+
+
+def create_channel_invite(channel_id: str) -> dict[str, Any]:
+    payload = {
+        "max_age": 0,
+        "max_uses": 0,
+        "temporary": False,
+        "unique": False,
+    }
+    with httpx.Client(timeout=20) as client:
+        response = client.post(
+            f"{DISCORD_API_BASE}/channels/{channel_id}/invites",
+            headers=discord_headers(),
+            json=payload,
+        )
+    response.raise_for_status()
+    invite = response.json()
+    invite["url"] = f"https://discord.gg/{invite.get('code')}"
+    return invite
 
 
 def send_channel_message(channel_id: str, payload: dict[str, Any]) -> dict[str, Any]:

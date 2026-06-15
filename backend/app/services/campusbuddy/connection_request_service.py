@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
-from app.services.campusbuddy.memory_service import get_current_user_id, get_matchable_memories
-from app.services.campusbuddy.sqlite_store import count_records, list_records, upsert_record
+from app.services.campusbuddy.memory_service import get_matchable_memories, require_user_id
+from app.services.campusbuddy.sqlite_store import create_sequential_record, list_records, mutate_record, upsert_record
 
 
 CONNECTION_REQUEST_KIND = "connection_request"
@@ -14,7 +14,7 @@ def create_connection_request(
     category: str,
     requester_user_id: str | None = None,
 ):
-    requester_user_id = requester_user_id or get_current_user_id()
+    requester_user_id = require_user_id(requester_user_id)
     helper_user_id = resolve_helper_user_id(connection_id, requester_user_id)
     if helper_user_id is None:
         return {
@@ -22,26 +22,27 @@ def create_connection_request(
             "message": "Could not create request because the anonymous connection is no longer available.",
         }
 
-    request_id = f"request_{count_records(CONNECTION_REQUEST_KIND) + 1:03d}"
-    connection_request = {
-        "request_id": request_id,
-        "requester_user_id": requester_user_id,
-        "helper_user_id": helper_user_id,
-        "requester_alias": anonymous_name_for_user(requester_user_id),
-        "helper_alias": anonymous_name_for_user(helper_user_id),
-        "topic": topic,
-        "category": category,
-        "request_message": request_message,
-        "status": "pending",
-        "requester_reveal_consent": False,
-        "helper_reveal_consent": False,
-        "identity_revealed": False,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    save_connection_request(connection_request)
+    def build_request(request_id: str) -> dict:
+        return {
+            "request_id": request_id,
+            "requester_user_id": requester_user_id,
+            "helper_user_id": helper_user_id,
+            "requester_alias": anonymous_name_for_user(requester_user_id),
+            "helper_alias": anonymous_name_for_user(helper_user_id),
+            "topic": topic,
+            "category": category,
+            "request_message": request_message,
+            "status": "pending",
+            "requester_reveal_consent": False,
+            "helper_reveal_consent": False,
+            "identity_revealed": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    connection_request = create_sequential_record(CONNECTION_REQUEST_KIND, "request", build_request)
 
     return {
-        "request_id": request_id,
+        "request_id": connection_request["request_id"],
         "status": "pending",
         "requester_alias": connection_request["requester_alias"],
         "helper_alias": connection_request["helper_alias"],
@@ -51,6 +52,7 @@ def create_connection_request(
 
 
 def get_incoming_connection_requests(user_id: str):
+    user_id = require_user_id(user_id)
     return {
         "user_alias": anonymous_name_for_user(user_id),
         "incoming_requests": [
@@ -67,7 +69,23 @@ def get_incoming_connection_requests(user_id: str):
 
 
 def respond_to_connection_request(request_id: str, user_id: str, action: str):
-    connection_request = find_connection_request(request_id)
+    user_id = require_user_id(user_id)
+    if action not in {"accepted", "denied"}:
+        return {
+            "error": "invalid_action",
+            "message": "Action must be accepted or denied.",
+        }
+
+    def apply_response(connection_request: dict) -> dict:
+        if connection_request["helper_user_id"] != user_id:
+            return connection_request
+        if connection_request["status"] != "pending":
+            return connection_request
+        connection_request["status"] = action
+        connection_request["responded_at"] = datetime.now(timezone.utc).isoformat()
+        return connection_request
+
+    connection_request = mutate_record(CONNECTION_REQUEST_KIND, request_id, apply_response)
     if connection_request is None:
         return {
             "error": "request_not_found",
@@ -80,40 +98,41 @@ def respond_to_connection_request(request_id: str, user_id: str, action: str):
             "message": "Only the anonymous helper for this request can accept or deny it.",
         }
 
-    if action not in {"accepted", "denied"}:
+    if connection_request["status"] != action:
         return {
-            "error": "invalid_action",
-            "message": "Action must be accepted or denied.",
+            "error": "request_already_handled",
+            "message": f"This request is already {connection_request['status']}.",
         }
-
-    connection_request["status"] = action
-    save_connection_request(connection_request)
     return public_incoming_request(connection_request)
 
 
 def give_reveal_consent(request_id: str, user_id: str):
-    connection_request = find_connection_request(request_id)
+    user_id = require_user_id(user_id)
+
+    def apply_consent(connection_request: dict) -> dict:
+        if user_id == connection_request["requester_user_id"]:
+            connection_request["requester_reveal_consent"] = True
+        elif user_id == connection_request["helper_user_id"]:
+            connection_request["helper_reveal_consent"] = True
+        connection_request["identity_revealed"] = (
+            connection_request["requester_reveal_consent"]
+            and connection_request["helper_reveal_consent"]
+        )
+        connection_request["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return connection_request
+
+    connection_request = mutate_record(CONNECTION_REQUEST_KIND, request_id, apply_consent)
     if connection_request is None:
         return {
             "error": "request_not_found",
             "message": "Connection request was not found.",
         }
 
-    if user_id == connection_request["requester_user_id"]:
-        connection_request["requester_reveal_consent"] = True
-    elif user_id == connection_request["helper_user_id"]:
-        connection_request["helper_reveal_consent"] = True
-    else:
+    if user_id not in {connection_request["requester_user_id"], connection_request["helper_user_id"]}:
         return {
             "error": "not_allowed",
             "message": "Only the requester or helper can give reveal consent for this request.",
         }
-
-    connection_request["identity_revealed"] = (
-        connection_request["requester_reveal_consent"]
-        and connection_request["helper_reveal_consent"]
-    )
-    save_connection_request(connection_request)
     return public_reveal_status(connection_request)
 
 
@@ -229,19 +248,7 @@ def reveal_status(connection_request: dict):
 def visible_name_for_user(user_id: str, alias: str, identity_revealed: bool):
     if not identity_revealed:
         return alias
-    return demo_name_for_user(user_id)
-
-
-def demo_name_for_user(user_id: str):
-    demo_names = {
-        "student_001": "Current Student",
-        "student_002": "Demo DSA Helper",
-        "student_003": "Demo React Helper",
-        "student_004": "Demo Sports Buddy",
-        "student_005": "Demo Campus Guide",
-        "student_006": "Demo Career Mentor",
-    }
-    return demo_names.get(user_id, anonymous_name_for_user(user_id))
+    return user_id
 
 
 def anonymous_name_for_user(user_id: str):

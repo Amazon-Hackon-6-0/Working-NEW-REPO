@@ -412,6 +412,7 @@ class ProcessCopilotService:
                     subject=subject,
                     body=body,
                     config=email_config,
+                    reply_to_email=case.get("current_user_email") or case.get("student_email"),
                 )
                 case["delivery_mode"] = "email"
                 case["status"] = "sent"
@@ -744,7 +745,9 @@ class ProcessCopilotService:
         request_text = {
             "college_id": college_id,
             "student_name": payload.student_name,
-            "student_email": payload.student_email,
+            "student_email": payload.student_email or payload.current_user_email,
+            "current_user_id": self._clean_text(payload.current_user_id),
+            "current_user_email": self._extract_email(payload.current_user_email or payload.student_email),
             "student_issue": payload.student_issue,
             "course_or_subject": payload.course_or_subject,
             "attached_document_names": payload.attached_document_names,
@@ -1359,7 +1362,7 @@ class ProcessCopilotService:
         deadline: str | None = None,
     ) -> str:
         name = payload.student_name or "[Student Name]"
-        email = payload.student_email or "Not provided"
+        email = payload.student_email or payload.current_user_email or "Not provided"
         course = payload.course_or_subject or "Not provided"
         doc_text = ", ".join(documents) if documents else "To be confirmed"
         attached_text = (
@@ -1532,11 +1535,15 @@ class ProcessCopilotService:
         subject: str,
         body: str,
         config: dict[str, Any],
+        reply_to_email: str | None = None,
     ) -> None:
         message = EmailMessage()
         message["From"] = f"{config['from_name']} <{config['from_email']}>"
         message["To"] = to_email
         message["Subject"] = subject
+        reply_to = self._extract_email(reply_to_email)
+        if reply_to:
+            message["Reply-To"] = reply_to
         message.set_content(body)
 
         if config["port"] == 465:
@@ -1583,6 +1590,8 @@ class ProcessCopilotService:
             event_key: timestamp,
             "to_office": case.get("routed_to_office"),
             "to_email": case.get("routed_to_email"),
+            "from_user_id": case.get("current_user_id"),
+            "from_email": case.get("current_user_email") or case.get("student_email"),
             "subject": subject,
             "body": body,
         }

@@ -2,24 +2,17 @@ import { useEffect, useState } from "react";
 import CampusBuddyHeader from "../components/CampusBuddyHeader.jsx";
 import { campusbuddyApi } from "../services/campusbuddyApi.js";
 
-const studentOptions = [
-  { id: "student_001", label: "student_001 - Current Student" },
-  { id: "student_002", label: "student_002 - Student 002" },
-  { id: "student_003", label: "student_003 - Student 003" },
-  { id: "student_004", label: "student_004 - Student 004" },
-  { id: "student_005", label: "student_005 - Student 005" },
-];
-
-export default function Groups() {
+export default function Groups({ currentUser }) {
   const [groups, setGroups] = useState([]);
   const [invites, setInvites] = useState([]);
-  const [selectedStudentId, setSelectedStudentId] = useState("student_001");
   const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [actingGroupId, setActingGroupId] = useState("");
+  const currentUserId = currentUser.userId;
 
-  async function loadGroups(studentId = selectedStudentId) {
+  async function loadGroups(studentId = currentUserId) {
+    if (!studentId) return;
     setError("");
     setIsLoading(true);
 
@@ -34,6 +27,7 @@ export default function Groups() {
   }
 
   async function loadInvites(studentId) {
+    if (!studentId) return;
     setError("");
 
     try {
@@ -47,8 +41,10 @@ export default function Groups() {
   useEffect(() => {
     let isActive = true;
 
+    if (!currentUserId) return undefined;
+
     campusbuddyApi
-      .groups(selectedStudentId)
+      .groups(currentUserId)
       .then((response) => {
         if (!isActive) return;
         setGroups(response.groups || []);
@@ -66,13 +62,15 @@ export default function Groups() {
     return () => {
       isActive = false;
     };
-  }, [selectedStudentId]);
+  }, [currentUserId]);
 
   useEffect(() => {
     let isActive = true;
 
+    if (!currentUserId) return undefined;
+
     campusbuddyApi
-      .groupInvites(selectedStudentId)
+      .groupInvites(currentUserId)
       .then((response) => {
         if (!isActive) return;
         setInvites(response.invites || []);
@@ -86,7 +84,7 @@ export default function Groups() {
     return () => {
       isActive = false;
     };
-  }, [selectedStudentId]);
+  }, [currentUserId]);
 
   async function joinGroup(groupId) {
     setStatusMessage("");
@@ -94,9 +92,9 @@ export default function Groups() {
     setActingGroupId(groupId);
 
     try {
-      const response = await campusbuddyApi.joinGroup(groupId, selectedStudentId);
-      await loadInvites(selectedStudentId);
-      await loadGroups(selectedStudentId);
+      const response = await campusbuddyApi.joinGroup(groupId, currentUserId);
+      await loadInvites(currentUserId);
+      await loadGroups(currentUserId);
       setStatusMessage(response.message || "Joined group.");
     } catch (requestError) {
       setError("Could not join this group right now.");
@@ -111,9 +109,9 @@ export default function Groups() {
     setActingGroupId(groupId);
 
     try {
-      const response = await campusbuddyApi.ignoreGroup(groupId, selectedStudentId);
-      await loadInvites(selectedStudentId);
-      await loadGroups(selectedStudentId);
+      const response = await campusbuddyApi.ignoreGroup(groupId, currentUserId);
+      await loadInvites(currentUserId);
+      await loadGroups(currentUserId);
       setStatusMessage(response.message || "Invite ignored.");
     } catch (requestError) {
       setError("Could not ignore this invite right now.");
@@ -139,18 +137,8 @@ export default function Groups() {
       </section>
 
       <section className="cb-form">
-        <label className="cb-select-label cb-student-select">
-          Current Student
-          <select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)}>
-            {studentOptions.map((student) => (
-              <option key={student.id} value={student.id}>
-                {student.label}
-              </option>
-            ))}
-          </select>
-        </label>
         <p className="cb-small-note">
-          Choose a student to see private group invites created from consented Trust Dashboard interests.
+          Private group invites for {currentUser.name || "the current user"} are created from consented Trust Dashboard interests.
         </p>
       </section>
 
@@ -164,7 +152,7 @@ export default function Groups() {
             <h2>Available Opportunities</h2>
             <p className="cb-small-note">Only group-level information is shown here.</p>
           </div>
-          <button className="cb-secondary" disabled={isLoading} onClick={() => loadGroups(selectedStudentId)} type="button">
+          <button className="cb-secondary" disabled={isLoading} onClick={() => loadGroups(currentUserId)} type="button">
             {isLoading ? "Loading..." : "Refresh groups"}
           </button>
         </div>
@@ -186,11 +174,15 @@ export default function Groups() {
                   <dl className="cb-detail-list">
                     <div>
                       <dt>Interest count</dt>
-                      <dd>{group.member_interest_count} / {group.threshold}</dd>
+                      <dd>{group.consensus_interest_count ?? group.member_interest_count} / {group.threshold}</dd>
                     </div>
                     <div>
                       <dt>Destination</dt>
                       <dd>{group.destination}</dd>
+                    </div>
+                    <div>
+                      <dt>Discord privacy</dt>
+                      <dd>{group.discord_private ? "Private channel" : "Invite-based channel"}</dd>
                     </div>
                     <div>
                       <dt>Invite mode</dt>
@@ -204,6 +196,14 @@ export default function Groups() {
                   <div className="cb-consent">
                     <strong>Group summary</strong>
                     <span>{group.group_summary}</span>
+                    {group.discord_invite_url ? (
+                      <a href={group.discord_invite_url} rel="noreferrer" target="_blank">
+                        Open Discord invite
+                      </a>
+                    ) : null}
+                    {group.discord_announcement_channel_id ? (
+                      <span>Invite announced in Discord channel {group.discord_announcement_channel_id}</span>
+                    ) : null}
                     {group.summary_fallback_reason ? (
                       <span>Fallback reason: {group.summary_fallback_reason}</span>
                     ) : null}
@@ -241,7 +241,7 @@ export default function Groups() {
             <h2>Private Invites</h2>
             <p className="cb-small-note">Only invites for the selected student appear here.</p>
           </div>
-          <button className="cb-secondary" onClick={() => loadInvites(selectedStudentId)} type="button">
+          <button className="cb-secondary" onClick={() => loadInvites(currentUserId)} type="button">
             Refresh invites
           </button>
         </div>

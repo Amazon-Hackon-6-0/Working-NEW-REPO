@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import os
+from threading import RLock
 from typing import Any
 
 from app.services.campusbuddy.ai_service import (
@@ -10,7 +11,8 @@ from app.services.campusbuddy.ai_service import (
 )
 from app.services.campusbuddy.complaint_classifier_service import classify_complaint
 from app.services.campusbuddy.discord_bridge import send_complaint_escalation_to_discord
-from app.services.campusbuddy.sqlite_store import count_records, list_records, upsert_record
+from app.services.campusbuddy.memory_service import require_user_id
+from app.services.campusbuddy.sqlite_store import create_sequential_record, list_records, upsert_record
 
 
 COMPLAINT_ESCALATION_THRESHOLD = 3
@@ -25,37 +27,42 @@ DISCORD_DESTINATIONS = {
 }
 COMPLAINT_KIND = "complaint"
 ESCALATION_KIND = "complaint_escalation"
+COMPLAINT_LOCK = RLock()
 
 
 def submit_complaint(student_id: str, text: str) -> dict:
+    student_id = require_user_id(student_id)
     classification = classify_complaint(text)
-    complaint_id = f"complaint_{count_records(COMPLAINT_KIND) + 1:03d}"
     anonymous_student_alias = anonymous_name_for_student(student_id)
-    duplicate_student_topic = has_student_reported_topic(student_id, classification["topic_key"])
 
-    complaint = {
-        "complaint_id": complaint_id,
-        "student_id": student_id,
-        "anonymous_student_alias": anonymous_student_alias,
-        "raw_text": text,
-        "category": classification["category"],
-        "topic_key": classification["topic_key"],
-        "sentiment": classification["sentiment"],
-        "urgency": classification["urgency"],
-        "target_group": classification["target_group"],
-        "normalized_issue": classification["normalized_issue"],
-        "generalized_summary": classification["generalized_summary"],
-        "source": classification["source"],
-        "fallback_reason": classification["fallback_reason"],
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    save_complaint(complaint)
-    similar_complaint_count = get_unique_student_count_for_topic(complaint["topic_key"])
-    ready_for_escalation = similar_complaint_count >= COMPLAINT_ESCALATION_THRESHOLD
-    escalation = handle_threshold_escalation(complaint, similar_complaint_count, ready_for_escalation)
+    with COMPLAINT_LOCK:
+        duplicate_student_topic = has_student_reported_topic(student_id, classification["topic_key"])
+
+        def build_complaint(complaint_id: str) -> dict:
+            return {
+                "complaint_id": complaint_id,
+                "student_id": student_id,
+                "anonymous_student_alias": anonymous_student_alias,
+                "raw_text": text,
+                "category": classification["category"],
+                "topic_key": classification["topic_key"],
+                "sentiment": classification["sentiment"],
+                "urgency": classification["urgency"],
+                "target_group": classification["target_group"],
+                "normalized_issue": classification["normalized_issue"],
+                "generalized_summary": classification["generalized_summary"],
+                "source": classification["source"],
+                "fallback_reason": classification["fallback_reason"],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        complaint = create_sequential_record(COMPLAINT_KIND, "complaint", build_complaint)
+        similar_complaint_count = get_unique_student_count_for_topic(complaint["topic_key"])
+        ready_for_escalation = similar_complaint_count >= COMPLAINT_ESCALATION_THRESHOLD
+        escalation = handle_threshold_escalation(complaint, similar_complaint_count, ready_for_escalation)
 
     return {
-        "complaint_id": complaint_id,
+        "complaint_id": complaint["complaint_id"],
         "stored_anonymously": True,
         "source": complaint["source"],
         "fallback_reason": complaint["fallback_reason"],
@@ -115,18 +122,21 @@ def create_mock_discord_escalation(complaint: dict, complaint_count: int) -> dic
         complaint_count=complaint_count,
         normalized_issue=complaint.get("normalized_issue"),
     )
-    return {
-        "escalation_id": f"escalation_{count_records(ESCALATION_KIND) + 1:03d}",
-        "topic_key": complaint["topic_key"],
-        "category": complaint["category"],
-        "target_group": target_group,
-        "complaint_count": complaint_count,
-        "generalized_summary": summary_result["summary"],
-        "summary_source": summary_result["source"],
-        "summary_fallback_reason": summary_result["fallback_reason"],
-        "status": "queued_mock_discord",
-        "destination": DISCORD_DESTINATIONS.get(target_group, "#student-council"),
-    }
+    def build_escalation(escalation_id: str) -> dict:
+        return {
+            "escalation_id": escalation_id,
+            "topic_key": complaint["topic_key"],
+            "category": complaint["category"],
+            "target_group": target_group,
+            "complaint_count": complaint_count,
+            "generalized_summary": summary_result["summary"],
+            "summary_source": summary_result["source"],
+            "summary_fallback_reason": summary_result["fallback_reason"],
+            "status": "queued_mock_discord",
+            "destination": DISCORD_DESTINATIONS.get(target_group, "#student-council"),
+        }
+
+    return create_sequential_record(ESCALATION_KIND, "escalation", build_escalation)
 
 
 def get_escalation_by_topic_key(topic_key: str) -> dict | None:

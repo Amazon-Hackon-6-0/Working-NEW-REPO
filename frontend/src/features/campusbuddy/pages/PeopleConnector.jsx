@@ -2,14 +2,13 @@ import { useEffect, useState } from "react";
 import CampusBuddyHeader from "../components/CampusBuddyHeader.jsx";
 import { campusbuddyApi } from "../services/campusbuddyApi.js";
 
-export default function PeopleConnector() {
+export default function PeopleConnector({ currentUser }) {
   const [query, setQuery] = useState("I need help in DSA graphs but I feel awkward asking in the group.");
   const [data, setData] = useState(null);
   const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [sendingConnectionId, setSendingConnectionId] = useState("");
-  const [selectedStudentId, setSelectedStudentId] = useState("student_001");
   const [inbox, setInbox] = useState(null);
   const [inboxError, setInboxError] = useState("");
   const [inboxStatusMessage, setInboxStatusMessage] = useState("");
@@ -17,21 +16,11 @@ export default function PeopleConnector() {
   const [revealingRequestId, setRevealingRequestId] = useState("");
   const [revealStatuses, setRevealStatuses] = useState({});
 
-  const studentOptions = [
-    { id: "student_001", label: "student_001 - Current Student" },
-    { id: "student_002", label: "student_002 - Student 002" },
-    { id: "student_003", label: "student_003 - Student 003" },
-    { id: "student_004", label: "student_004 - Student 004" },
-    { id: "student_005", label: "student_005 - Student 005" },
-    { id: "student_006", label: "student_006 - Student 006" },
-    { id: "student_007", label: "student_007 - Student 007" },
-    { id: "student_008", label: "student_008 - Student 008" },
-    { id: "student_009", label: "student_009 - Student 009" },
-  ];
+  const currentUserId = currentUser.userId;
 
   useEffect(() => {
-    fetchIncomingRequests(selectedStudentId);
-  }, [selectedStudentId]);
+    if (currentUserId) fetchIncomingRequests(currentUserId);
+  }, [currentUserId]);
 
   async function fetchIncomingRequests(userId) {
     setInboxError("");
@@ -49,9 +38,9 @@ export default function PeopleConnector() {
     setRespondingRequestId(requestId);
 
     try {
-      const updatedRequest = await campusbuddyApi.respondConnectionRequest(requestId, selectedStudentId, action);
+      const updatedRequest = await campusbuddyApi.respondConnectionRequest(requestId, currentUserId, action);
       setInboxStatusMessage(`Request ${updatedRequest.status}. Identity is still hidden.`);
-      await fetchIncomingRequests(selectedStudentId);
+      await fetchIncomingRequests(currentUserId);
     } catch (requestError) {
       setInboxError("Could not update this request right now. Please try again.");
     } finally {
@@ -65,7 +54,7 @@ export default function PeopleConnector() {
     setRevealingRequestId(requestId);
 
     try {
-      const revealStatus = await campusbuddyApi.giveRevealConsent(requestId, selectedStudentId);
+      const revealStatus = await campusbuddyApi.giveRevealConsent(requestId, currentUserId);
       setRevealStatuses((currentStatuses) => ({
         ...currentStatuses,
         [requestId]: revealStatus,
@@ -75,7 +64,7 @@ export default function PeopleConnector() {
           ? "Identity revealed by mutual consent."
           : "Reveal consent recorded. Identities stay anonymous until both students agree."
       );
-      await fetchIncomingRequests(selectedStudentId);
+      await fetchIncomingRequests(currentUserId);
     } catch (requestError) {
       setInboxError("Could not update reveal consent right now. Please try again.");
     } finally {
@@ -85,14 +74,14 @@ export default function PeopleConnector() {
 
   async function findMatches(event) {
     event.preventDefault();
-    if (!query.trim()) return;
+    if (!query.trim() || !currentUserId) return;
 
     setIsLoading(true);
     setStatusMessage("");
     setError("");
 
     try {
-      setData(await campusbuddyApi.connect(query.trim(), selectedStudentId));
+      setData(await campusbuddyApi.connect(query.trim(), currentUserId));
     } catch (connectError) {
       setError("Could not find anonymous matches right now. Please try again.");
     } finally {
@@ -111,10 +100,10 @@ export default function PeopleConnector() {
         requestMessage: data.suggested_request_message,
         topic: data.extracted_topic,
         category: data.category,
-        requesterUserId: selectedStudentId,
+        requesterUserId: currentUserId,
       });
       setStatusMessage(request.message || "Anonymous request sent. The helper can accept or deny from their inbox.");
-      fetchIncomingRequests(selectedStudentId);
+      fetchIncomingRequests(currentUserId);
     } catch (requestError) {
       setError("Could not send the anonymous request right now. Please try again.");
     } finally {
@@ -154,18 +143,8 @@ export default function PeopleConnector() {
         Requester and helper both control anonymity before any identity reveal.
       </CampusBuddyHeader>
       <section className="cb-form">
-        <label className="cb-select-label cb-student-select">
-          Current Student
-          <select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)}>
-            {studentOptions.map((user) => (
-              <option key={user.id} value={user.id}>
-                {user.label}
-              </option>
-            ))}
-          </select>
-        </label>
         <p className="cb-small-note">
-          Selected student is the requester for new help requests and the viewer for incoming or sent requests.
+          {currentUser.name || "The current user"} is the requester for new help requests and the viewer for incoming or sent requests.
         </p>
       </section>
       <form className="cb-input-row" onSubmit={findMatches}>

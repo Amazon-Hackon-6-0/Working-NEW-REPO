@@ -2,10 +2,12 @@ import {
   ArrowLeft,
   HeartHandshake,
   LayoutDashboard,
+  Mail,
   MessageCircle,
   Network,
   Send,
   ShieldCheck,
+  UserRound,
   Users,
 } from "lucide-react";
 
@@ -19,7 +21,7 @@ const links = [
   ["/campusbuddy/committee-dashboard", "Committee", LayoutDashboard],
 ];
 
-export default function CampusBuddyShell({ children, path, navigate }) {
+export default function CampusBuddyShell({ children, currentUser, onLogout, path, navigate }) {
   return (
     <section className="cb-shell">
       <aside className="cb-side">
@@ -37,6 +39,19 @@ export default function CampusBuddyShell({ children, path, navigate }) {
         >
           <ArrowLeft size={16} />
           Back to CampusFlow Dashboard
+        </button>
+        <div className="cb-user-summary">
+          <div>
+            <UserRound size={15} />
+            <span>{currentUser.name}</span>
+          </div>
+          <div>
+            <Mail size={15} />
+            <span>{currentUser.email}</span>
+          </div>
+        </div>
+        <button className="cb-back cb-logout" type="button" onClick={onLogout}>
+          Logout
         </button>
         <nav>
           {links.map(([href, label, Icon]) => (

@@ -2,37 +2,25 @@ import { useState } from "react";
 import CampusBuddyHeader from "../components/CampusBuddyHeader.jsx";
 import { campusbuddyApi } from "../services/campusbuddyApi.js";
 
-const studentOptions = [
-  { id: "student_001", label: "student_001 - Current Student" },
-  { id: "student_002", label: "student_002 - Student 002" },
-  { id: "student_003", label: "student_003 - Student 003" },
-  { id: "student_004", label: "student_004 - Student 004" },
-  { id: "student_005", label: "student_005 - Student 005" },
-  { id: "student_006", label: "student_006 - Student 006" },
-  { id: "student_007", label: "student_007 - Student 007" },
-  { id: "student_008", label: "student_008 - Student 008" },
-  { id: "student_009", label: "student_009 - Student 009" },
-];
-
-export default function CommitteeEscalation() {
+export default function CommitteeEscalation({ currentUser }) {
   const [complaintText, setComplaintText] = useState("Hostel WiFi is not working properly.");
   const [data, setData] = useState(null);
   const [outbox, setOutbox] = useState([]);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingOutbox, setIsLoadingOutbox] = useState(false);
-  const [selectedStudentId, setSelectedStudentId] = useState("student_001");
+  const currentUserId = currentUser.userId;
 
   async function submitComplaint() {
     const trimmedText = complaintText.trim();
-    if (!trimmedText) return;
+    if (!trimmedText || !currentUserId) return;
 
     setError("");
     setIsSubmitting(true);
 
     try {
       const response = await campusbuddyApi.submitComplaint({
-        studentId: selectedStudentId,
+        studentId: currentUserId,
         complaintText: trimmedText,
       });
       setData(response);
@@ -76,18 +64,8 @@ export default function CommitteeEscalation() {
       </section>
 
       <section className="cb-form">
-        <label className="cb-select-label cb-student-select">
-          Current Student
-          <select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)}>
-            {studentOptions.map((student) => (
-              <option key={student.id} value={student.id}>
-                {student.label}
-              </option>
-            ))}
-          </select>
-        </label>
         <p className="cb-small-note">
-          Choose the student submitting the anonymous complaint.
+          Anonymous complaint submitted for {currentUser.name || "the current user"}.
         </p>
         <textarea
           placeholder="Describe a campus issue privately..."
