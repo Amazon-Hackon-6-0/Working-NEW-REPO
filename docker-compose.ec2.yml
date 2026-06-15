@@ -46,6 +46,21 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-
+  caddy:
+    image: caddy:2-alpine
+    container_name: amazonhackon-caddy
+    restart: unless-stopped
+    depends_on:
+      - frontend
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config 
 volumes:
   backend_app_data:
+  caddy_data:
+  caddy_config:
