@@ -15,7 +15,6 @@ export default function AuthGate({ children }) {
       name: String(formData.get("name") || ""),
       email: String(formData.get("email") || ""),
       password: String(formData.get("password") || ""),
-      accessCode: String(formData.get("accessCode") || ""),
     };
     const result = mode === "signup" ? signUp(payload) : logIn(payload);
     if (!result.ok) {
@@ -67,13 +66,6 @@ export default function AuthGate({ children }) {
             Password
             <input name="password" autoComplete={isSignUp ? "new-password" : "current-password"} type="password" />
           </label>
-          {isSignUp ? (
-            <label>
-              Campus access code
-              <input name="accessCode" placeholder="Ask admin for access code" />
-            </label>
-          ) : null}
-
           {message ? <div className="auth-message">{message}</div> : null}
 
           <button className="primary-button auth-submit" type="submit">

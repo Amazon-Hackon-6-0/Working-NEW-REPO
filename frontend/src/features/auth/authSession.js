@@ -2,7 +2,6 @@ import { writeCampusBuddyProfile } from "../campusbuddy/services/campusbuddyProf
 
 const ACCOUNTS_KEY = "campusflow.accounts";
 const SESSION_KEY = "campusflow.session";
-const ACCESS_CODE = process.env.NEXT_PUBLIC_CAMPUSFLOW_ACCESS_CODE || "CAMPUSFLOW";
 
 function readJson(key, fallback) {
   if (typeof window === "undefined") return fallback;
@@ -49,17 +48,13 @@ export function readAuthSession() {
   return user;
 }
 
-export function signUp({ name, email, password, accessCode }) {
+export function signUp({ name, email, password }) {
   const cleanName = name.trim();
   const cleanEmail = normalizeEmail(email);
   const cleanPassword = password.trim();
-  const cleanAccessCode = accessCode.trim();
 
-  if (!cleanName || !cleanEmail || !cleanPassword || !cleanAccessCode) {
-    return { ok: false, message: "Enter name, email, password, and access code." };
-  }
-  if (cleanAccessCode !== ACCESS_CODE) {
-    return { ok: false, message: "Access code is not authorized for this campus." };
+  if (!cleanName || !cleanEmail || !cleanPassword) {
+    return { ok: false, message: "Enter name, email, and password." };
   }
 
   const accounts = readJson(ACCOUNTS_KEY, []);
