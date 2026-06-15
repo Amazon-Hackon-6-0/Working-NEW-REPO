@@ -1,6 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArrowRight,
+  Bell,
+  BrainCircuit,
+  CalendarClock,
+  CheckCircle2,
+  CircleAlert,
+  ClipboardList,
+  MessageCircle,
+  Orbit,
+  ShieldCheck,
+  Upload,
+  Users,
+  Zap,
+} from "lucide-react";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
@@ -183,6 +198,19 @@ function formatExamMetric(exam) {
   return `${dateLabel} · ${exam.time}${venue}`;
 }
 
+function formatExamCountdown(exam) {
+  if (!exam?.date) return "Awaiting schedule";
+  const examDate = new Date(`${exam.date}T00:00:00`);
+  if (Number.isNaN(examDate.getTime())) return "Date pending";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.ceil((examDate.getTime() - today.getTime()) / 86400000);
+  if (days < 0) return "Review archive";
+  if (days === 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  return `${days} days`;
+}
+
 function compactSubjectCode(subjectName, attendance = []) {
   if (!subjectName) return "None";
   const normalized = subjectName.toLowerCase();
@@ -224,7 +252,7 @@ export default function Home() {
   const [timetable, setTimetable] = useState(null);
   const [timetablePdfFile, setTimetablePdfFile] = useState(null);
   const [timetableUploadMessage, setTimetableUploadMessage] = useState(
-    "Upload your semester timetable PDF to replace demo attendance subjects.",
+    "Upload your semester timetable PDF to update attendance subjects.",
   );
   const [timetableUploadStatus, setTimetableUploadStatus] = useState("idle");
   const [isTimetableUploading, setIsTimetableUploading] = useState(false);
@@ -232,7 +260,7 @@ export default function Home() {
     "Ready to send attendance, work, classes, next exam, and next class to Discord.",
   );
   const [isBriefingSending, setIsBriefingSending] = useState(false);
-  const [processCollegeId, setProcessCollegeId] = useState("default");
+  const [processCollegeId] = useState("default");
   const [policyPdfFile, setPolicyPdfFile] = useState(null);
   const [policyUploadMessage, setPolicyUploadMessage] = useState(
     "Upload a campus policy PDF before asking process questions.",
@@ -242,7 +270,7 @@ export default function Home() {
   const [relayStudentName, setRelayStudentName] = useState("");
   const [relayStudentEmail, setRelayStudentEmail] = useState("");
   const [relaySubject, setRelaySubject] = useState("");
-  const [relayAttachedDocs, setRelayAttachedDocs] = useState("");
+  const [relayAttachedDocs] = useState("");
   const [relayIssue, setRelayIssue] = useState(
     "I missed my DBMS exam because I was sick.",
   );
@@ -330,6 +358,93 @@ export default function Home() {
     : [
         "Attendance, assignments, classes, and exam reminders will appear after live data loads.",
       ];
+  const averageAttendance = attendance.length
+    ? Math.round(
+        attendance.reduce((total, subject) => total + (Number(subject.percent) || 0), 0) /
+          attendance.length,
+      )
+    : 100;
+  const attendanceRingStyle = {
+    "--value": `${averageAttendance}%`,
+    "--ring-color":
+      averageAttendance < threshold
+        ? "#ef4444"
+        : averageAttendance < 85
+          ? "#38BDF8"
+          : "#22c55e",
+  };
+  const attendanceRiskSubjects = attendance
+    .filter((subject) => Number(subject.percent) <= threshold + 5)
+    .sort((a, b) => Number(a.percent) - Number(b.percent))
+    .slice(0, 3);
+  const pendingWorkItems = liveAssignments
+    .filter((assignment) => assignment.state !== "Submitted")
+    .slice(0, 3);
+  const todayWeekday = new Date().toLocaleDateString("en-US", { weekday: "long" });
+  const todayClassEntries = Array.isArray(timetable?.today_classes)
+    ? timetable.today_classes
+    : (timetable?.entries || []).filter((entry) => entry.weekday === todayWeekday);
+  const nextClassCardValue = timetable?.next_class?.subject_code || "None";
+  const nextClassCardDetail = timetable?.next_class
+    ? nextClassLabel
+    : "No class data available.";
+  const dashboardFeatureCards = [
+    {
+      label: "Attendance risk",
+      value: attendanceRiskSubjects.length
+        ? `${attendanceRiskSubjects.length} subject${attendanceRiskSubjects.length === 1 ? "" : "s"}`
+        : "Clear",
+      detail: attendanceRiskSubjects.length
+        ? attendanceRiskSubjects
+            .map((subject) => `${subject.code}: ${Math.round(Number(subject.percent) || 0)}%`)
+            .join(" · ")
+        : "No subjects near the 75% line.",
+      tone: attendanceRiskSubjects.length ? "warning" : "good",
+      icon: CircleAlert,
+    },
+    {
+      label: "Pending work",
+      value: pendingAssignments
+        ? `${pendingAssignments} item${pendingAssignments === 1 ? "" : "s"}`
+        : "All clear",
+      detail: pendingWorkItems.length
+        ? pendingWorkItems.map((assignment) => assignment.title).join(" · ")
+        : "No pending assignments.",
+      tone: pendingAssignments ? "active" : "good",
+      icon: ClipboardList,
+    },
+    {
+      label: "Today's classes",
+      value: todayClassCount
+        ? `${todayClassCount} class${todayClassCount === 1 ? "" : "es"}`
+        : "None",
+      detail: todayClassCount
+        ? todayClassEntries
+            .slice(0, 3)
+            .map((entry) => entry.subject_code)
+            .filter(Boolean)
+            .join(", ") || "Schedule loaded for today."
+        : timetable?.has_uploaded_timetable
+          ? "No classes scheduled today."
+          : "Upload timetable to activate.",
+      tone: todayClassCount ? "active" : "neutral",
+      icon: CalendarClock,
+    },
+    {
+      label: "Next class",
+      value: nextClassCardValue,
+      detail: nextClassCardDetail,
+      tone: timetable?.next_class ? "active" : "neutral",
+      icon: Orbit,
+    },
+    {
+      label: "Next exam",
+      value: nextExam ? nextExamCode : "Schedule needed",
+      detail: nextExam ? nextExamLabel : "Upload exam schedule to activate.",
+      tone: nextExam ? "active" : "neutral",
+      icon: ShieldCheck,
+    },
+  ];
 
   const loadProcessCases = useCallback(async () => {
     const query = new URLSearchParams({
@@ -358,7 +473,7 @@ export default function Home() {
         setOverviewMessage(`Live data loaded. Last verified: ${data.last_verified}`);
       })
       .catch(() => {
-        setOverviewMessage("Using demo data because backend overview is not reachable.");
+        setOverviewMessage("Using sample data because backend overview is not reachable.");
       });
 
     await fetch(`${API_BASE}/campusflow/attendance/events`)
@@ -787,12 +902,41 @@ export default function Home() {
 
   return (
     <main className="app-shell">
+      <nav className="global-nav" aria-label="CampusFlow global navigation">
+        <button
+          type="button"
+          className="brand-lockup"
+          onClick={() => window.location.assign("/")}
+        >
+          <span className="brand-orb">
+            <Orbit size={20} />
+          </span>
+          <span>
+            <strong>CampusOS</strong>
+            <small>by CampusFlow</small>
+          </span>
+        </button>
+        <div className="nav-center">
+          <a href="#dashboard">Dashboard</a>
+          <a href="#attendance">Attendance</a>
+          <a href="#timetable">Timetable</a>
+          <a href="#notifications">Updates</a>
+          <a href="#campusbuddy-ai">CampusBuddy AI</a>
+        </div>
+        <div className="nav-status">
+          <span className="status-dot" />
+          <span>Live campus intelligence</span>
+        </div>
+      </nav>
+
       <aside className="sidebar" aria-label="CampusFlow navigation">
         <div>
           <p className="eyebrow">CampusFlow</p>
           <h1>Student Life OS</h1>
+          <span className="sidebar-caption">One platform. Every student signal.</span>
         </div>
         <nav>
+          <a href="#dashboard">Dashboard</a>
           <a href="#attendance">Attendance</a>
           <a href="#timetable">Timetable</a>
           <a href="#process-copilot">Process Relay</a>
@@ -810,9 +954,37 @@ export default function Home() {
       </aside>
 
       <section className="workspace">
-        <header className="topbar">
+        <section className="hero-panel" id="dashboard">
+          <div className="hero-particles" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="hero-copy">
+            <p className="eyebrow">CampusFlow command center</p>
+            <h2>
+              <span>CampusOS</span>
+              <strong>The Operating System For Student Life</strong>
+            </h2>
+            <p>
+              CampusFlow unifies attendance, timetable intelligence, assignments,
+              exams, campus requests, Discord nudges, and CampusBuddy AI into one
+              premium student command center.
+            </p>
+            <div className="hero-actions">
+              <a className="primary-button hero-button" href="#dashboard">
+                Get Started <ArrowRight size={18} />
+              </a>
+              <a className="secondary-button hero-button" href="#timetable">
+                <Upload size={18} /> Upload Timetable
+              </a>
+            </div>
+          </div>
+        </section>
+
+        <header className="topbar command-strip">
           <div>
-            <p className="eyebrow">Semester 5 dashboard</p>
+            <p className="eyebrow">Semester 5 live dashboard</p>
             <h2>Tonight&apos;s briefing is ready for Discord</h2>
           </div>
           <button
@@ -825,32 +997,96 @@ export default function Home() {
           </button>
         </header>
 
-        <section className="metrics" aria-label="CampusFlow summary">
-          <div className="metric">
-            <span>Attendance risk</span>
-            <strong>{dangerCount}</strong>
-            <p>subjects near or below 75%</p>
-          </div>
-          <div className="metric">
-            <span>Pending work</span>
-            <strong>{pendingAssignments}</strong>
-            <p>assignments need attention</p>
-          </div>
-          <div className="metric">
-            <span>Today&apos;s classes</span>
-            <strong>{todayClassCount}</strong>
-            <p>{timetable?.has_uploaded_timetable ? "from uploaded timetable" : "demo timetable fallback"}</p>
-          </div>
-          <div className="metric">
-            <span>Next class</span>
-            <strong>{timetable?.next_class?.subject_code || "None"}</strong>
-            <p>{nextClassLabel}</p>
-          </div>
-          <div className="metric">
-            <span>Next exam</span>
-            <strong>{nextExamCode}</strong>
-            <p>{nextExamLabel}</p>
-          </div>
+        <section className="dashboard-feature-grid" aria-label="CampusFlow daily focus">
+          {dashboardFeatureCards.map(({ label, value, detail, tone, icon: Icon }) => (
+            <article className={`dashboard-feature-card ${tone}`} key={label}>
+              <div className="dashboard-feature-topline">
+                <span className="dashboard-feature-icon">
+                  <Icon size={18} />
+                </span>
+                <span>{label}</span>
+              </div>
+              <strong>{value}</strong>
+              <p>{detail}</p>
+            </article>
+          ))}
+        </section>
+
+        <section className="intelligence-grid">
+          <article className="campusbuddy-feature-card" id="campusbuddy-ai">
+            <div className="feature-card-glow" aria-hidden="true" />
+            <div className="feature-card-content">
+              <span className="feature-badge">
+                <BrainCircuit size={16} /> Intelligent module inside CampusFlow
+              </span>
+              <h3>CampusBuddy AI</h3>
+              <p>
+                A premium companion layer for emotional support, safe peer
+                connections, consent-based memory, groups, and anonymous campus
+                escalation, all inside the CampusFlow platform.
+              </p>
+              <div className="feature-pills">
+                <span>Private chat</span>
+                <span>Trust controls</span>
+                <span>Peer matching</span>
+                <span>Campus escalation</span>
+              </div>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => window.location.assign("/campusbuddy")}
+              >
+                Open CampusBuddy AI <ArrowRight size={18} />
+              </button>
+            </div>
+            <div className="feature-console">
+              <div className="console-row">
+                <MessageCircle size={17} />
+                <span>Student feels isolated after class</span>
+              </div>
+              <div className="console-row">
+                <ShieldCheck size={17} />
+                <span>Memory saved only after consent</span>
+              </div>
+              <div className="console-row">
+                <Users size={17} />
+                <span>Anonymous helper match prepared</span>
+              </div>
+            </div>
+          </article>
+
+          <article className="panel notification-center" id="notifications">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Notification center</p>
+                <h3>Priority campus signals</h3>
+              </div>
+              <Bell size={20} />
+            </div>
+            <div className="notification-list">
+              <div className="notification-item priority-high">
+                <CircleAlert size={17} />
+                <div>
+                  <strong>{dangerCount} attendance risk alerts</strong>
+                  <span>Subjects near or below the 75% line.</span>
+                </div>
+              </div>
+              <div className="notification-item priority-medium">
+                <Zap size={17} />
+                <div>
+                  <strong>{pendingAssignments} assignments pending</strong>
+                  <span>CampusFlow is tracking next steps.</span>
+                </div>
+              </div>
+              <div className="notification-item priority-low">
+                <CheckCircle2 size={17} />
+                <div>
+                  <strong>{todayClassCount} classes today</strong>
+                  <span>{nextClassLabel}</span>
+                </div>
+              </div>
+            </div>
+          </article>
         </section>
 
         <section className="panel timetable-panel" id="timetable">
@@ -860,7 +1096,7 @@ export default function Home() {
               <h3>PDF upload and weekly classes</h3>
             </div>
             <span className="threshold">
-              {timetable?.has_uploaded_timetable ? "Uploaded" : "Demo fallback"}
+              {timetable?.has_uploaded_timetable ? "Uploaded" : "No timetable uploaded"}
             </span>
           </div>
           <div className="file-upload-row">
@@ -928,7 +1164,7 @@ export default function Home() {
               <p className="eyebrow">Campus helpdesk AI</p>
               <h3>Campus Process Relay</h3>
             </div>
-            <span className="threshold">{processCollegeId || "default"}</span>
+            <span className="threshold">Policy context</span>
           </div>
           <p className="relay-feature-note">
             Campus Process Relay turns a student issue into a routed campus case,
@@ -938,15 +1174,6 @@ export default function Home() {
           <div className="relay-workspace">
             <div className="relay-create-card">
               <h4>Create process case</h4>
-              <label>
-                College ID
-                <input
-                  type="text"
-                  value={processCollegeId}
-                  onChange={(event) => setProcessCollegeId(event.target.value)}
-                  placeholder="default"
-                />
-              </label>
               <div className="file-upload-row">
                 <label>
                   Campus policy PDF
@@ -983,7 +1210,7 @@ export default function Home() {
                     type="text"
                     value={relayStudentName}
                     onChange={(event) => setRelayStudentName(event.target.value)}
-                    placeholder="Optional"
+                    placeholder="Enter student name"
                   />
                 </label>
                 <label>
@@ -992,7 +1219,7 @@ export default function Home() {
                     type="email"
                     value={relayStudentEmail}
                     onChange={(event) => setRelayStudentEmail(event.target.value)}
-                    placeholder="Optional"
+                    placeholder="Enter student email"
                   />
                 </label>
                 <label>
@@ -1005,15 +1232,6 @@ export default function Home() {
                   />
                 </label>
               </div>
-              <label>
-                Attached document names
-                <input
-                  type="text"
-                  value={relayAttachedDocs}
-                  onChange={(event) => setRelayAttachedDocs(event.target.value)}
-                  placeholder="medical_certificate.pdf, exam_form.pdf"
-                />
-              </label>
               <button
                 type="button"
                 className="primary-button process-ask-button"
@@ -1264,6 +1482,19 @@ export default function Home() {
 
             <div className="attendance-list">
               <p className="live-note">{overviewMessage}</p>
+              <div className="attendance-command">
+                <div className="attendance-ring" style={attendanceRingStyle}>
+                  <span>{averageAttendance}%</span>
+                  <small>average</small>
+                </div>
+                <div>
+                  <strong>AI attendance forecast</strong>
+                  <p>
+                    CampusFlow blends live classes, missed hours, and bunk budget to
+                    keep the semester risk visible before it becomes a crisis.
+                  </p>
+                </div>
+              </div>
               {attendance.map((subject) => {
                 const progressWidth = Math.max(
                   0,
@@ -1271,7 +1502,10 @@ export default function Home() {
                 );
 
                 return (
-                  <article className="subject-row" key={subject.code}>
+                  <article
+                    className={`subject-row ${statusClass(subject.state)}`}
+                    key={subject.code}
+                  >
                     <div>
                       <strong>{subject.code}</strong>
                       <span>{subject.name}</span>
@@ -1342,7 +1576,7 @@ export default function Home() {
         </section>
 
         <section className="three-column">
-          <section className="panel" id="exams">
+          <section className="panel exam-panel" id="exams">
             <div className="panel-header">
               <div>
                 <p className="eyebrow">Freshness check</p>
@@ -1356,31 +1590,40 @@ export default function Home() {
                 </p>
               ) : (
                 liveExams.map((exam) => (
-                  <article className="list-item" key={exam.subject}>
+                  <article className="list-item exam-card" key={exam.subject}>
                     <div>
                       <strong>{exam.subject}</strong>
                       <span>{exam.date} at {exam.time}</span>
                       <small>{exam.venue}</small>
+                      <small className="revision-note">
+                        Smart revision: prioritize weak attendance subjects first.
+                      </small>
                     </div>
-                    <span className={`pill ${exam.verified ? "safe" : "watch"}`}>
-                      {exam.verified ? "Verified" : "Confirm"}
-                    </span>
+                    <div className="exam-countdown">
+                      <strong>{formatExamCountdown(exam)}</strong>
+                      <span className={`pill ${exam.verified ? "safe" : "watch"}`}>
+                        {exam.verified ? "Verified" : "Confirm"}
+                      </span>
+                    </div>
                   </article>
                 ))
               )}
             </div>
           </section>
 
-          <section className="panel" id="assignments">
+          <section className="panel assignment-panel" id="assignments">
             <div className="panel-header">
               <div>
                 <p className="eyebrow">Google Classroom</p>
                 <h3>Assignments</h3>
               </div>
             </div>
-            <div className="stack">
+            <div className="stack assignment-timeline">
               {liveAssignments.map((assignment) => (
-                <article className="list-item" key={assignment.title}>
+                <article
+                  className={`list-item assignment-item ${statusClass(assignment.state)}`}
+                  key={assignment.title}
+                >
                   <div>
                     <strong>{assignment.title}</strong>
                     <span>{assignment.course}</span>
@@ -1394,17 +1637,20 @@ export default function Home() {
             </div>
           </section>
 
-          <section className="panel" id="briefing">
+          <section className="panel updates-panel" id="briefing">
             <div className="panel-header">
               <div>
-                <p className="eyebrow">Discord digest</p>
-                <h3>Daily briefing</h3>
+                <p className="eyebrow">Campus updates</p>
+                <h3>AI daily briefing</h3>
               </div>
             </div>
-            <div className="briefing">
+            <div className="briefing news-feed">
               <p className="live-note">{briefingMessage}</p>
-              {briefingItems.map((item) => (
-                <p key={item}>{item}</p>
+              {briefingItems.map((item, index) => (
+                <p key={item}>
+                  <span>Update {index + 1}</span>
+                  {item}
+                </p>
               ))}
             </div>
           </section>
@@ -1433,7 +1679,7 @@ export default function Home() {
           <p className="upload-message">{examUploadMessage}</p>
         </section>
 
-        <section className="panel ask-panel">
+        <section className="panel ask-panel premium-chat-panel">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Grounded AI answer</p>
@@ -1477,7 +1723,7 @@ export default function Home() {
           )}
         </section>
 
-        <section className="panel">
+        <section className="panel audit-panel">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Audit trail</p>

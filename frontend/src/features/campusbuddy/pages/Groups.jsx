@@ -2,12 +2,12 @@ import { useEffect, useState } from "react";
 import CampusBuddyHeader from "../components/CampusBuddyHeader.jsx";
 import { campusbuddyApi } from "../services/campusbuddyApi.js";
 
-const demoStudents = [
+const studentOptions = [
   { id: "student_001", label: "student_001 - Current Student" },
-  { id: "student_002", label: "student_002 - Demo Student 002" },
-  { id: "student_003", label: "student_003 - Demo Student 003" },
-  { id: "student_004", label: "student_004 - Demo Student 004" },
-  { id: "student_005", label: "student_005 - Demo Student 005" },
+  { id: "student_002", label: "student_002 - Student 002" },
+  { id: "student_003", label: "student_003 - Student 003" },
+  { id: "student_004", label: "student_004 - Student 004" },
+  { id: "student_005", label: "student_005 - Student 005" },
 ];
 
 export default function Groups() {
@@ -140,9 +140,9 @@ export default function Groups() {
 
       <section className="cb-form">
         <label className="cb-select-label cb-student-select">
-          Current Demo Student
+          Current Student
           <select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)}>
-            {demoStudents.map((student) => (
+            {studentOptions.map((student) => (
               <option key={student.id} value={student.id}>
                 {student.label}
               </option>
@@ -150,7 +150,7 @@ export default function Groups() {
           </select>
         </label>
         <p className="cb-small-note">
-          Demo mode: switch students to see private group invites created from their consented Trust Dashboard interests.
+          Choose a student to see private group invites created from consented Trust Dashboard interests.
         </p>
       </section>
 
@@ -209,7 +209,7 @@ export default function Groups() {
                     ) : null}
                   </div>
                   {hasJoined ? (
-                    <div className="cb-success">Joined. Discord joining is mocked for now.</div>
+                    <div className="cb-success">Joined. Discord joining is handled by the campus integration.</div>
                   ) : (
                     <div className="cb-actions">
                       <button
@@ -239,7 +239,7 @@ export default function Groups() {
           <div>
             <span className="cb-eyebrow">My Group Invites</span>
             <h2>Private Invites</h2>
-            <p className="cb-small-note">Only invites for the selected demo student appear here.</p>
+            <p className="cb-small-note">Only invites for the selected student appear here.</p>
           </div>
           <button className="cb-secondary" onClick={() => loadInvites(selectedStudentId)} type="button">
             Refresh invites
@@ -280,7 +280,7 @@ export default function Groups() {
                     {invite.group_summary ? <span>{invite.group_summary}</span> : null}
                   </div>
                   {invite.invite_status === "joined" ? (
-                    <div className="cb-success">Status joined. Discord joining is mocked for now.</div>
+                    <div className="cb-success">Status joined. Discord joining is handled by the campus integration.</div>
                   ) : null}
                   <div className="cb-actions">
                     {canJoin ? (

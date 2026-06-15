@@ -17,16 +17,16 @@ export default function PeopleConnector() {
   const [revealingRequestId, setRevealingRequestId] = useState("");
   const [revealStatuses, setRevealStatuses] = useState({});
 
-  const demoUsers = [
+  const studentOptions = [
     { id: "student_001", label: "student_001 - Current Student" },
-    { id: "student_002", label: "student_002 - Demo Student 002" },
-    { id: "student_003", label: "student_003 - Demo Student 003" },
-    { id: "student_004", label: "student_004 - Demo Student 004" },
-    { id: "student_005", label: "student_005 - Demo Student 005" },
-    { id: "student_006", label: "student_006 - Demo Student 006" },
-    { id: "student_007", label: "student_007 - Demo Student 007" },
-    { id: "student_008", label: "student_008 - Demo Student 008" },
-    { id: "student_009", label: "student_009 - Demo Student 009" },
+    { id: "student_002", label: "student_002 - Student 002" },
+    { id: "student_003", label: "student_003 - Student 003" },
+    { id: "student_004", label: "student_004 - Student 004" },
+    { id: "student_005", label: "student_005 - Student 005" },
+    { id: "student_006", label: "student_006 - Student 006" },
+    { id: "student_007", label: "student_007 - Student 007" },
+    { id: "student_008", label: "student_008 - Student 008" },
+    { id: "student_009", label: "student_009 - Student 009" },
   ];
 
   useEffect(() => {
@@ -155,9 +155,9 @@ export default function PeopleConnector() {
       </CampusBuddyHeader>
       <section className="cb-form">
         <label className="cb-select-label cb-student-select">
-          Current Demo Student
+          Current Student
           <select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)}>
-            {demoUsers.map((user) => (
+            {studentOptions.map((user) => (
               <option key={user.id} value={user.id}>
                 {user.label}
               </option>
@@ -165,7 +165,7 @@ export default function PeopleConnector() {
           </select>
         </label>
         <p className="cb-small-note">
-          Demo mode: selected student is the requester for new help requests and the viewer for incoming/sent requests.
+          Selected student is the requester for new help requests and the viewer for incoming or sent requests.
         </p>
       </section>
       <form className="cb-input-row" onSubmit={findMatches}>
@@ -253,9 +253,9 @@ export default function PeopleConnector() {
       <section className="cb-section">
         <div className="cb-inbox-header">
           <div>
-            <span className="cb-eyebrow">Helper Demo Inbox</span>
+            <span className="cb-eyebrow">Helper Inbox</span>
             <h2>Incoming Requests</h2>
-            <p className="cb-small-note">View only anonymous incoming requests for the selected demo student.</p>
+            <p className="cb-small-note">View only anonymous incoming requests for the selected student.</p>
           </div>
         </div>
 
@@ -360,9 +360,9 @@ export default function PeopleConnector() {
 
         <div className="cb-inbox-header cb-sent-header">
           <div>
-            <span className="cb-eyebrow">Requester Demo View</span>
+            <span className="cb-eyebrow">Requester View</span>
             <h2>Sent Requests</h2>
-            <p className="cb-small-note">View anonymous requests sent by the selected demo student.</p>
+            <p className="cb-small-note">View anonymous requests sent by the selected student.</p>
           </div>
         </div>
 

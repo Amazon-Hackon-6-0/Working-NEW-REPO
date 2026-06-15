@@ -9,16 +9,16 @@ const prompts = [
   "Mess food quality has been bad for 3 days.",
 ];
 
-const demoStudents = [
+const studentOptions = [
   { id: "student_001", label: "student_001 - Current Student" },
-  { id: "student_002", label: "student_002 - Demo Student 002" },
-  { id: "student_003", label: "student_003 - Demo Student 003" },
-  { id: "student_004", label: "student_004 - Demo Student 004" },
-  { id: "student_005", label: "student_005 - Demo Student 005" },
-  { id: "student_006", label: "student_006 - Demo Student 006" },
-  { id: "student_007", label: "student_007 - Demo Student 007" },
-  { id: "student_008", label: "student_008 - Demo Student 008" },
-  { id: "student_009", label: "student_009 - Demo Student 009" },
+  { id: "student_002", label: "student_002 - Student 002" },
+  { id: "student_003", label: "student_003 - Student 003" },
+  { id: "student_004", label: "student_004 - Student 004" },
+  { id: "student_005", label: "student_005 - Student 005" },
+  { id: "student_006", label: "student_006 - Student 006" },
+  { id: "student_007", label: "student_007 - Student 007" },
+  { id: "student_008", label: "student_008 - Student 008" },
+  { id: "student_009", label: "student_009 - Student 009" },
 ];
 
 export default function CampusBuddyChat() {
@@ -103,9 +103,9 @@ export default function CampusBuddyChat() {
       </section>
       <section className="cb-form">
         <label className="cb-select-label cb-student-select">
-          Current Demo Student
+          Current Student
           <select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)}>
-            {demoStudents.map((student) => (
+            {studentOptions.map((student) => (
               <option key={student.id} value={student.id}>
                 {student.label}
               </option>
@@ -113,12 +113,12 @@ export default function CampusBuddyChat() {
           </select>
         </label>
         <p className="cb-small-note">
-          Demo mode: this simulates which student is chatting. Memories are saved only after clicking Remember.
+          Choose a student for this chat. Memories are saved only after clicking Remember.
         </p>
       </section>
       <section className="cb-scenarios">
         {prompts.map((prompt) => (
-          <button key={prompt} onClick={() => send(prompt)}>{prompt}</button>
+          <button key={prompt} onClick={() => setMessage(prompt)} type="button">{prompt}</button>
         ))}
       </section>
       <section className="cb-chat-window">
@@ -167,7 +167,11 @@ export default function CampusBuddyChat() {
       </section>
       {remembered ? <div className="cb-success">{remembered}</div> : null}
       <div className="cb-input-row">
-        <input value={message} onChange={(event) => setMessage(event.target.value)} />
+        <input
+          placeholder="Type your message..."
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+        />
         <button className="cb-primary" onClick={() => send()}>Send</button>
       </div>
     </div>

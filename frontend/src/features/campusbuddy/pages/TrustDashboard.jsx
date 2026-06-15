@@ -2,16 +2,16 @@ import { useEffect, useState } from "react";
 import CampusBuddyHeader from "../components/CampusBuddyHeader.jsx";
 import { campusbuddyApi } from "../services/campusbuddyApi.js";
 
-const demoStudents = [
+const studentOptions = [
   { id: "student_001", label: "student_001 - Current Student" },
-  { id: "student_002", label: "student_002 - Demo Student 002" },
-  { id: "student_003", label: "student_003 - Demo Student 003" },
-  { id: "student_004", label: "student_004 - Demo Student 004" },
-  { id: "student_005", label: "student_005 - Demo Student 005" },
-  { id: "student_006", label: "student_006 - Demo Student 006" },
-  { id: "student_007", label: "student_007 - Demo Student 007" },
-  { id: "student_008", label: "student_008 - Demo Student 008" },
-  { id: "student_009", label: "student_009 - Demo Student 009" },
+  { id: "student_002", label: "student_002 - Student 002" },
+  { id: "student_003", label: "student_003 - Student 003" },
+  { id: "student_004", label: "student_004 - Student 004" },
+  { id: "student_005", label: "student_005 - Student 005" },
+  { id: "student_006", label: "student_006 - Student 006" },
+  { id: "student_007", label: "student_007 - Student 007" },
+  { id: "student_008", label: "student_008 - Student 008" },
+  { id: "student_009", label: "student_009 - Student 009" },
 ];
 
 const defaultUsedFor = {
@@ -106,9 +106,9 @@ export default function TrustDashboard() {
 
       <section className="cb-form">
         <label className="cb-select-label cb-student-select">
-          Current Demo Student
+          Current Student
           <select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)}>
-            {demoStudents.map((student) => (
+            {studentOptions.map((student) => (
               <option key={student.id} value={student.id}>
                 {student.label}
               </option>
@@ -116,7 +116,7 @@ export default function TrustDashboard() {
           </select>
         </label>
         <p className="cb-small-note">
-          Demo mode: choose a student to simulate whose private Trust Dashboard is open.
+          Choose a student whose private Trust Dashboard is open.
         </p>
       </section>
 
@@ -125,7 +125,7 @@ export default function TrustDashboard() {
           <div>
             <span className="cb-eyebrow">Add Consent Memory</span>
             <h2>Remember only with permission</h2>
-            <p className="cb-small-note">Use this to seed interests for group suggestions or demo different students.</p>
+            <p className="cb-small-note">Use this to seed interests for group suggestions or personalize different students.</p>
           </div>
         </div>
         <input
@@ -187,7 +187,7 @@ export default function TrustDashboard() {
           ) : (
             <article className="cb-card cb-wide">
               <h3>No memories for this student yet</h3>
-              <p>Add a consent memory above to personalize CampusBuddy for this demo student.</p>
+              <p>Add a consent memory above to personalize CampusBuddy for this student.</p>
             </article>
           )}
         </section>

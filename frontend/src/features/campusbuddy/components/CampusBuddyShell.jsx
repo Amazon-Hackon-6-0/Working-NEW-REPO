@@ -1,5 +1,7 @@
 import {
+  ArrowLeft,
   HeartHandshake,
+  LayoutDashboard,
   MessageCircle,
   Network,
   Send,
@@ -14,6 +16,7 @@ const links = [
   ["/campusbuddy/connect", "Connect", Network],
   ["/campusbuddy/groups", "Groups", Users],
   ["/campusbuddy/escalation", "Escalation", Send],
+  ["/campusbuddy/committee-dashboard", "Committee", LayoutDashboard],
 ];
 
 export default function CampusBuddyShell({ children, path, navigate }) {
@@ -24,9 +27,17 @@ export default function CampusBuddyShell({ children, path, navigate }) {
           <div className="cb-mark">CB</div>
           <div>
             <strong>CampusBuddy AI</strong>
-            <span>Personal AI friend</span>
+            <span>Inside CampusFlow</span>
           </div>
         </div>
+        <button
+          className="cb-back"
+          type="button"
+          onClick={() => window.location.assign("/")}
+        >
+          <ArrowLeft size={16} />
+          Back to CampusFlow Dashboard
+        </button>
         <nav>
           {links.map(([href, label, Icon]) => (
             <button

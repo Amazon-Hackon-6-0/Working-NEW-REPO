@@ -2,16 +2,16 @@ import { useState } from "react";
 import CampusBuddyHeader from "../components/CampusBuddyHeader.jsx";
 import { campusbuddyApi } from "../services/campusbuddyApi.js";
 
-const demoStudents = [
+const studentOptions = [
   { id: "student_001", label: "student_001 - Current Student" },
-  { id: "student_002", label: "student_002 - Demo Student 002" },
-  { id: "student_003", label: "student_003 - Demo Student 003" },
-  { id: "student_004", label: "student_004 - Demo Student 004" },
-  { id: "student_005", label: "student_005 - Demo Student 005" },
-  { id: "student_006", label: "student_006 - Demo Student 006" },
-  { id: "student_007", label: "student_007 - Demo Student 007" },
-  { id: "student_008", label: "student_008 - Demo Student 008" },
-  { id: "student_009", label: "student_009 - Demo Student 009" },
+  { id: "student_002", label: "student_002 - Student 002" },
+  { id: "student_003", label: "student_003 - Student 003" },
+  { id: "student_004", label: "student_004 - Student 004" },
+  { id: "student_005", label: "student_005 - Student 005" },
+  { id: "student_006", label: "student_006 - Student 006" },
+  { id: "student_007", label: "student_007 - Student 007" },
+  { id: "student_008", label: "student_008 - Student 008" },
+  { id: "student_009", label: "student_009 - Student 009" },
 ];
 
 export default function CommitteeEscalation() {
@@ -54,7 +54,7 @@ export default function CommitteeEscalation() {
       const response = await campusbuddyApi.complaintEscalations();
       setOutbox(response.outbox || []);
     } catch (requestError) {
-      setError("Could not load mock Discord escalations right now.");
+      setError("Could not load Discord escalations right now.");
     } finally {
       setIsLoadingOutbox(false);
     }
@@ -68,7 +68,7 @@ export default function CommitteeEscalation() {
   return (
     <div>
       <CampusBuddyHeader eyebrow="Anonymous Complaint Escalation" title="Pattern before escalation">
-        CampusBuddy stores complaints privately, groups similar issues, and prepares a generalized mock Discord message only after enough anonymous reports match.
+        CampusBuddy stores complaints privately, groups similar issues, and prepares a generalized Discord message only after enough anonymous reports match.
       </CampusBuddyHeader>
       <section className="cb-note">
         <strong>Committee-safe by design.</strong>
@@ -77,9 +77,9 @@ export default function CommitteeEscalation() {
 
       <section className="cb-form">
         <label className="cb-select-label cb-student-select">
-          Current Demo Student
+          Current Student
           <select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)}>
-            {demoStudents.map((student) => (
+            {studentOptions.map((student) => (
               <option key={student.id} value={student.id}>
                 {student.label}
               </option>
@@ -87,7 +87,7 @@ export default function CommitteeEscalation() {
           </select>
         </label>
         <p className="cb-small-note">
-          Demo mode: choose a student to simulate who is submitting the anonymous complaint.
+          Choose the student submitting the anonymous complaint.
         </p>
         <textarea
           placeholder="Describe a campus issue privately..."
@@ -99,7 +99,7 @@ export default function CommitteeEscalation() {
             {isSubmitting ? "Submitting..." : "Submit anonymous complaint"}
           </button>
           <button className="cb-secondary" disabled={isLoadingOutbox} onClick={loadOutbox} type="button">
-            {isLoadingOutbox ? "Loading..." : "View Mock Discord Escalations"}
+            {isLoadingOutbox ? "Loading..." : "View Discord Escalations"}
           </button>
         </div>
       </section>
@@ -131,7 +131,7 @@ export default function CommitteeEscalation() {
               <dd>{data.ready_for_escalation ? "Yes" : "No"}</dd>
             </div>
             <div>
-              <dt>Mock Discord destination</dt>
+              <dt>Discord destination</dt>
               <dd>{data.mock_discord_destination || "Not prepared yet"}</dd>
             </div>
           </dl>
@@ -165,14 +165,14 @@ export default function CommitteeEscalation() {
       <section className="cb-section">
         <div className="cb-inbox-header">
           <div>
-            <span className="cb-eyebrow">Mock Discord Outbox</span>
+            <span className="cb-eyebrow">Discord Outbox</span>
             <h2>Escalations</h2>
             <p className="cb-small-note">
-              Mock Discord Outbox contains only generalized anonymous summaries. Student IDs and raw complaints are never shown here.
+              Discord Outbox contains only generalized anonymous summaries. Student IDs and raw complaints are never shown here.
             </p>
           </div>
           <button className="cb-secondary" disabled={isLoadingOutbox} onClick={loadOutbox} type="button">
-            {isLoadingOutbox ? "Loading..." : "View Mock Discord Escalations"}
+            {isLoadingOutbox ? "Loading..." : "View Discord Escalations"}
           </button>
         </div>
 
@@ -212,7 +212,7 @@ export default function CommitteeEscalation() {
           </div>
         ) : (
           <article className="cb-card cb-inbox-empty">
-            <h3>No mock Discord escalations yet</h3>
+            <h3>No Discord escalations yet</h3>
             <p>Submit three similar anonymous complaints to prepare a generalized escalation.</p>
           </article>
         )}

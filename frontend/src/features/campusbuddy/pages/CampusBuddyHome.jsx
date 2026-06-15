@@ -1,7 +1,7 @@
 import { ArrowRight, ShieldCheck } from "lucide-react";
 import CampusBuddyHeader from "../components/CampusBuddyHeader.jsx";
 
-const demoSteps = [
+const flowSteps = [
   ["Personal AI Friend", "A lonely student speaks safely and gets warm support.", "/campusbuddy/chat"],
   ["Consent-Based Memory", "The student clicks Remember before anything is saved.", "/campusbuddy/trust-dashboard"],
   ["Mutual Anonymous Connector", "Requester and helper choose what to reveal.", "/campusbuddy/connect"],
@@ -14,8 +14,8 @@ export default function CampusBuddyHome({ navigate }) {
     <div>
       <section className="cb-hero">
         <div>
-          <CampusBuddyHeader eyebrow="CampusBuddy AI" title="Speak. Connect. Resolve. Belong.">
-            CampusBuddy helps students speak, connect, resolve, and belong. It starts as a personal AI friend, then helps students take safe consent-based steps toward people, groups, and campus support.
+          <CampusBuddyHeader eyebrow="CampusBuddy AI inside CampusFlow" title="Speak. Connect. Resolve. Belong.">
+            CampusBuddy is the intelligent companion module inside CampusFlow. It starts as a personal AI friend, then helps students take safe consent-based steps toward people, groups, and campus support.
           </CampusBuddyHeader>
           <div className="cb-actions">
             <button className="cb-primary" onClick={() => navigate("/campusbuddy/chat")}>
@@ -27,6 +27,7 @@ export default function CampusBuddyHome({ navigate }) {
           </div>
         </div>
         <article className="cb-card">
+          <span className="cb-pill">CampusFlow module</span>
           <strong>Why anonymity?</strong>
           <p>Anonymity is a confidence bridge, not the destination.</p>
           <p>Raw chats stay private. Identity is revealed only by consent.</p>
@@ -34,10 +35,10 @@ export default function CampusBuddyHome({ navigate }) {
       </section>
 
       <section className="cb-section">
-        <span className="cb-eyebrow">Visible demo guide</span>
-        <h2>Five judge demo steps</h2>
+        <span className="cb-eyebrow">CampusBuddy flow</span>
+        <h2>Five safe support paths</h2>
         <div className="cb-flow-grid">
-          {demoSteps.map(([title, detail, href], index) => (
+          {flowSteps.map(([title, detail, href], index) => (
             <article key={title} onClick={() => navigate(href)}>
               <strong>{index + 1}</strong>
               <h3>{title}</h3>
